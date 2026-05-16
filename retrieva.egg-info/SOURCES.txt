@@ -1,8 +1,0 @@
-LICENSE
-README.md
-pyproject.toml
-retrieva.egg-info/PKG-INFO
-retrieva.egg-info/SOURCES.txt
-retrieva.egg-info/dependency_links.txt
-retrieva.egg-info/requires.txt
-retrieva.egg-info/top_level.txt
