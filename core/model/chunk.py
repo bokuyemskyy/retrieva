@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 
 class Modality(str, Enum):
@@ -15,19 +16,15 @@ class Modality(str, Enum):
 
 @dataclass
 class Chunk:
-    """
-    Produced by any ingestor.
-
-    content     – always plain text
-    source_path – absolute path of the *original* file
-    modality    – how the content was obtained
-    metadata    – page, chunk_index, start_char, image_index, etc
-    """
-
     content: str
     source_path: str
     modality: Modality
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    chunk_id: str = field(default_factory=lambda: str(uuid4()))
+    document_id: Optional[str] = None
+
+    embedding: Optional[List[float]] = None
 
     def __repr__(self) -> str:
         preview = self.content[:60].replace("\n", " ")

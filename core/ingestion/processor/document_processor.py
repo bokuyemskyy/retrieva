@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-
 from core.ingestion.chunker import Chunker
 from core.ingestion.image_captioner import ImageCaptioner
 from core.ingestion.processor.base_file_processor import BaseFileProcessor

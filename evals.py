@@ -10,7 +10,7 @@ from ragas.metrics import DiscreteMetric
 
 # Add the current directory to the path so we can import rag module when run as a script
 sys.path.insert(0, str(Path(__file__).parent))
-from rag import default_rag_client
+from core.rag import default_rag_client
 
 openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 rag_client = default_rag_client(llm_client=openai_client, logdir="evals/logs")
