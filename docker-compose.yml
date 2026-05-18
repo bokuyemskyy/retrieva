@@ -1,0 +1,10 @@
+include:
+  - infrastructure/docker-compose.yml
+services:
+  retrieva:
+    container_name: retrieva
+    ports:
+      - "8501:8501"
+    build:
+      dockerfile: Dockerfile
+    restart: unless-stopped
