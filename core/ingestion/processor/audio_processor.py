@@ -12,23 +12,6 @@ WhisperModel = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"
 
 
 class AudioProcessor(BaseFileProcessor):
-    """
-    Transcribes audio to text.
-
-    Supported file extensions:
-    .mp3  .wav  .flac  .ogg  .m4a  .aac  .opus  .webm
-
-    Parameters
-    model_size:
-        faster-whisper model to load.
-    device:
-        "cpu" or "cuda".
-    compute_type:
-        Quantisation level.
-    language:
-        Language code.
-    """
-
     def __init__(
         self,
         model_size: WhisperModel = "base",

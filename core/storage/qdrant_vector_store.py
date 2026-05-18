@@ -102,7 +102,7 @@ class QdrantVectorStore:
             collection_name=self.chunks_collection,
             limit=limit,
             with_payload=True,
-            with_vector=False,
+            with_vectors=False,
         )
         return [
             {
@@ -119,7 +119,7 @@ class QdrantVectorStore:
             collection_name=self.documents_collection,
             limit=limit,
             with_payload=True,
-            with_vector=False,
+            with_vectors=False,
         )
         return [point.payload for point in results]
 
