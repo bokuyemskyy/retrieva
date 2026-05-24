@@ -137,6 +137,7 @@ class RAG:
 
                 try:
                     chunks = processor.ingest(document)
+                    print("final")
                     self.object_storage.save_chunks_cache(
                         self.workspace, content_hash, chunks
                     )
@@ -146,8 +147,7 @@ class RAG:
 
             prepared.append((document, chunks))
             chunks_to_embed.extend(chunks)
-
-        self.gpu_manager.deactivate()
+            print("file complete")
 
         if chunks_to_embed:
             self.gpu_manager.activate(self.embedder)
@@ -162,14 +162,17 @@ class RAG:
     def retrieve_chunks(
         self, query: str, top_k: int = 5, fetch_k: int = 30
     ) -> List[SearchResult]:
-        with self.gpu_manager.using(self.embedder):
-            return self.retriever.retrieve(
-                workspace=self.workspace, query=query, top_k=top_k
-            )
+        self.gpu_manager.activate(self.embedder)
 
-    def generate_response(self, query: str, top_k: int = 5, fetch_k: int = 30) -> str:
+        return self.retriever.retrieve(
+            workspace=self.workspace, query=query, top_k=top_k
+        )
+
+    def query(self, query: str, top_k: int = 5, fetch_k: int = 30) -> str:
         chunks = self.retrieve_chunks(query, top_k=top_k, fetch_k=fetch_k)
+        return self.generate_response(query, chunks)
 
+    def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
         if not chunks:
             return "No relevant information was found in the knowledge base."
 

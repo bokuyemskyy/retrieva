@@ -55,15 +55,20 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         texts = [c.content for c in chunks]
         total_chars = sum(len(t) for t in texts)
-        print(f"Embedding {len(chunks)} chunks ({total_chars} chars)…")
+        print(
+            f"Embedding {len(chunks)} chunks ({total_chars} chars) on {self._model.device}"
+        )
 
         start = time.time()
+
         vectors = self._model.encode(
             texts,
             normalize_embeddings=True,
             batch_size=64,
             show_progress_bar=True,
+            device=str(self._model.device),
         )
+
         print(f"Finished embedding in {time.time() - start:.2f}s.")
 
         for chunk, vec in zip(chunks, vectors):

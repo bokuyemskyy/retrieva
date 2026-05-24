@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS documents (
     workspace TEXT NOT NULL,
     source_path TEXT NOT NULL,
     original_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL, 
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -26,6 +27,9 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_documents_workspace
 ON documents(workspace);
+
+CREATE INDEX IF NOT EXISTS idx_documents_content_hash 
+ON documents(content_hash);
 
 CREATE INDEX IF NOT EXISTS idx_chunks_workspace
 ON chunks(workspace);
