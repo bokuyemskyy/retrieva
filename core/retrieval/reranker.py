@@ -1,6 +1,13 @@
+from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 from sentence_transformers import CrossEncoder
-from core.retrieval.reranking.base_reranker import BaseReranker
+from chunk import Chunk
+
+
+class BaseReranker(ABC):
+    @abstractmethod
+    def rerank(self, query: str, chunks: List[Chunk], top_k: int) -> List[Chunk]:
+        pass
 
 
 class CrossEncoderReranker(BaseReranker):

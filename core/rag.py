@@ -1,80 +1,59 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
+from ingestion.processor.base_file_processor import BaseFileProcessor
+from models import ChunkRecord, Document, DocumentRecord, SearchResult
 from slugify import slugify
 
-from core.embedding.base_embedder import BaseEmbedder
+from embedding.embedder import BaseEmbedder
+from storage.vector_storage import PostgresVectorStorage
 from core.ingestion.chunker import Chunker
-from core.ingestion.ingestor import Ingestor
 from core.ingestion.processor.audio_processor import AudioProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
-from core.retrieval.base_retriever import BaseRetriever
-from core.retrieval.qdrant_retriever import QdrantRetriever
-from core.storage.qdrant_vector_store import QdrantVectorStore
-from core.storage.storage_manager import StorageManager
+from retrieval.retriever import BaseRetriever, DenseRetriever
+from storage.object_storage import ObjectStorage
 from core.ingestion.image_captioner import ImageCaptioner
-
-
-def _build_default_processors(chunker: Chunker) -> Dict[str, Any]:
-    image_proc = ImageCaptioner
-    return {
-        "pdf": DocumentProcessor(chunker=chunker, image_processor=image_proc),
-        "txt": TextProcessor(chunker=chunker),
-        "md": TextProcessor(chunker=chunker),
-        "png": ImageProcessor(chunker=chunker, image_processor=image_proc),
-        "jpg": ImageProcessor(chunker=chunker, image_processor=image_proc),
-        "jpeg": ImageProcessor(chunker=chunker, image_processor=image_proc),
-        "wav": AudioProcessor(chunker=chunker),
-        "mp3": AudioProcessor(chunker=chunker),
-    }
 
 
 class RAG:
     def __init__(
         self,
         workspace: str,
-        qdrant_url: str,
         storage_dir: str,
         embedder: BaseEmbedder,
         llm_client,
-        chunker: Optional[Chunker] = None,
-        retriever: Optional[BaseRetriever] = None,
-        processors: Optional[Dict[str, Any]] = None,
+        chunker: Chunker,
+        image_captioner: ImageCaptioner,
+        postgres_url: str,
         system_prompt: Optional[str] = None,
     ):
         self.workspace = slugify(workspace)
-
-        _chunker = chunker or Chunker()
-
-        self.storage = StorageManager(storage_dir, self.workspace)
-
-        vector_size = getattr(embedder, "vector_size", 1536)
-
-        self.vector_store = QdrantVectorStore(
-            url=qdrant_url,
-            workspace=self.workspace,
-            vector_size=vector_size,
-        )
-
-        _processors = processors or _build_default_processors(_chunker)
-
-        self.ingestor = Ingestor(
-            storage_manager=self.storage,
-            embedder=embedder,
-            vector_store=self.vector_store,
-            chunker=_chunker,
-            processors=_processors,
-        )
-
-        self.retriever = retriever or QdrantRetriever(
-            vector_store=self.vector_store,
-            embedder=embedder,
-        )
-
+        self.storage_dir = storage_dir
+        self.embedder = embedder
         self.llm_client = llm_client
+        self.chunker = chunker
+        self.image_captioner = image_captioner
+
+        self.object_storage = ObjectStorage(storage_dir)
+        self.vector_storage: PostgresVectorStorage = PostgresVectorStorage(postgres_url)
+
+        self.retriever = DenseRetriever(self.vector_storage, self.embedder)
+
+        self.processors: Dict[str, BaseFileProcessor] = {
+            "pdf": DocumentProcessor(chunker=chunker, image_captioner=image_captioner),
+            "txt": TextProcessor(chunker=chunker),
+            "md": TextProcessor(chunker=chunker),
+            "png": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
+            "jpg": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
+            "jpeg": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
+            "wav": AudioProcessor(chunker=chunker),
+            "mp3": AudioProcessor(chunker=chunker),
+        }
 
         self.system_prompt = system_prompt or (
             "Answer the question using only the provided context. "
@@ -83,22 +62,71 @@ class RAG:
             "Question: {query}"
         )
 
-    def add_file(
-        self, path: str, file_type: str, metadata: Optional[dict] = None
-    ) -> str:
-        return self.ingestor.save_and_process_file(
-            source_path=path,
-            file_type=file_type,
-            metadata=metadata or {},
+    def add_document(
+        self,
+        original_path: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> UUID:
+        path = Path(original_path).expanduser().resolve()
+
+        if not path.exists():
+            raise FileNotFoundError(f"Input file does not exist: {path}")
+
+        ext = path.suffix.lower().lstrip(".")
+
+        processor = self.processors.get(ext)
+        if processor is None:
+            raise ValueError(f"Unsupported file type: {ext!r}")
+
+        document_id = uuid4()
+        stored_path = self.object_storage.save_file(
+            workspace=self.workspace,
+            document_id=document_id,
+            source_path=str(path),
         )
 
-    def delete_document(self, document_id: str) -> None:
-        self.vector_store.delete_document(document_id)
+        document = Document(
+            document_id=document_id,
+            workspace=self.workspace,
+            filename=path.name,
+            source_path=stored_path,
+            original_path=str(path),
+        )
+
+        try:
+            self.vector_storage.upsert_document(document)
+
+            print("upsert complete")
+            chunks = processor.ingest(document)
+
+            print(f"ingestion complete, got {chunks}")
+            self.embedder.embed_chunks(chunks)
+
+            print("embedding complete")
+            self.vector_storage.upsert_chunks(chunks)
+
+            print("upsert complete")
+            return document_id
+
+        except Exception:
+            try:
+                self.vector_storage.delete_document(document_id)
+            except Exception:
+                pass
+
+            try:
+                self.object_storage.delete_file(self.workspace, document_id)
+            except Exception:
+                pass
+
+            raise
 
     def retrieve_chunks(
         self, query: str, top_k: int = 5, fetch_k: int = 30
-    ) -> List[Dict[str, Any]]:
-        return self.retriever.retrieve(query=query, top_k=top_k, fetch_k=fetch_k)
+    ) -> List[SearchResult]:
+        return self.retriever.retrieve(
+            workspace=self.workspace, query=query, top_k=top_k
+        )
 
     def generate_response(self, query: str, top_k: int = 5, fetch_k: int = 30) -> str:
         chunks = self.retrieve_chunks(query, top_k=top_k, fetch_k=fetch_k)
@@ -106,9 +134,7 @@ class RAG:
         if not chunks:
             return "No relevant information was found in the knowledge base."
 
-        context = "\n\n".join(
-            f"[score={c.get('score', 0):.3f}]\n{c['text']}" for c in chunks
-        )
+        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
 
         prompt = self.system_prompt.format(query=query, context=context)
 
@@ -119,32 +145,29 @@ class RAG:
 
         return response.choices[0].message.content.strip()
 
-    def get_ingested_chunks(self, limit: int = 10_000) -> List[Dict[str, Any]]:
-        return self.vector_store.get_all_chunks(limit=limit)
+    def get_chunks(self, limit: int = 10_000) -> List[ChunkRecord]:
+        return self.vector_storage.get_chunks(
+            workspace=self.workspace,
+            limit=limit,
+        )
 
-    def get_ingested_documents(self, limit: int = 10_000) -> List[Dict[str, Any]]:
-        return self.vector_store.get_all_documents(limit=limit)
+    def get_documents(self, limit: int = 10_000) -> List[DocumentRecord]:
+        return self.vector_storage.get_documents(
+            workspace=self.workspace,
+            limit=limit,
+        )
 
-    def clear_knowledge_base(self) -> None:
-        self.vector_store.delete_all_chunks_and_documents()
-        self.storage.clear_all_files()
+    def delete_document(self, document_id: UUID) -> None:
+        self.vector_storage.delete_document(document_id)
+        self.object_storage.delete_file(
+            workspace=self.workspace,
+            document_id=document_id,
+        )
 
-    def delete_workspace(self) -> None:
-        self.vector_store.delete_workspace_collections()
-        self.storage.delete_workspace_directory()
+    def delete_all_workspaces(self) -> None:
+        self.vector_storage.delete_all_workspaces()
+        self.object_storage.delete_all_workspaces()
 
-
-def default_rag_client(
-    llm_client,
-    embedder: BaseEmbedder,
-    qdrant_url: str = "http://localhost:6333",
-    storage_dir: str = "./storage",
-    workspace: str = "default",
-) -> RAG:
-    return RAG(
-        workspace=workspace,
-        qdrant_url=qdrant_url,
-        storage_dir=storage_dir,
-        embedder=embedder,
-        llm_client=llm_client,
-    )
+    def delete_current_workspace(self) -> None:
+        self.vector_storage.delete_workspace(self.workspace)
+        self.object_storage.delete_workspace(self.workspace)

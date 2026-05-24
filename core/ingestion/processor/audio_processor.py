@@ -3,10 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from .base_file_processor import BaseFileProcessor
-from ..chunker import Chunker
-from ..image_captioner import ImageCaptioner
-from ...model.chunk import Chunk, Modality
+from core.ingestion.processor.base_file_processor import BaseFileProcessor
+from core.ingestion.chunker import Chunker
+from core.models import Chunk, Document, Modality
 
 WhisperModel = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"]
 
@@ -14,33 +13,32 @@ WhisperModel = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"
 class AudioProcessor(BaseFileProcessor):
     def __init__(
         self,
+        chunker: Chunker,
         model_size: WhisperModel = "base",
         device: str = "cpu",
         compute_type: str = "int8",
         language: Optional[str] = "en",
-        chunker: Optional[Chunker] = None,
-        image_processor: Optional[ImageCaptioner] = None,
     ) -> None:
-        super().__init__(chunker=chunker, image_processor=image_processor)
+        self.chunker = chunker
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._language = language
         self._model = None
 
-    def ingest(self, file_path: str) -> List[Chunk]:
-        path = Path(file_path).resolve()
+    def ingest(self, document: Document) -> List[Chunk]:
+        path = Path(document.source_path).resolve()
+
         if not path.is_file():
-            raise FileNotFoundError(f"Audio file not found: {path}")
+            raise FileNotFoundError(document.source_path)
 
         transcript = self._transcribe(path)
 
         return self.chunker.chunk(
-            text=transcript,
-            source_path=str(path),
+            content=transcript,
+            document=document,
             modality=Modality.AUDIO,
-            base_metadata={
-                "filename": path.name,
+            metadata={
                 "whisper_model": self._model_size,
                 "language": self._language or "auto",
             },
@@ -50,7 +48,7 @@ class AudioProcessor(BaseFileProcessor):
         try:
             from faster_whisper import WhisperModel  # type: ignore
         except ImportError as exc:
-            raise ImportError("AudioIngestor requires faster-whisper") from exc
+            raise ImportError("AudioProcessor requires faster-whisper") from exc
 
         if self._model is None:
             self._model = WhisperModel(

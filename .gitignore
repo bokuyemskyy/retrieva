@@ -1,3 +1,9 @@
+**/storage/
+**/vault/
+
+!core/storage/
+!core/storage/**
+
 evals/**/*
 !evals/*/
 
