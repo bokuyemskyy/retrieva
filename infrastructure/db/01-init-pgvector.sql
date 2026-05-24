@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     content TEXT NOT NULL,
     modality TEXT NOT NULL,
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    embedding VECTOR(1536) NOT NULL,
+    embedding VECTOR(1024) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     CONSTRAINT fk_document
         FOREIGN KEY(document_id)

@@ -1,4 +1,6 @@
 from __future__ import annotations
+import re
+import unicodedata
 
 from typing import List
 from uuid import uuid4
@@ -23,7 +25,8 @@ class Chunker:
         modality: Modality,
         metadata: dict | None = None,
     ) -> List[Chunk]:
-        content = content.strip()
+        content = self._clean_text(content)
+
         if not content:
             return []
 
@@ -71,3 +74,20 @@ class Chunker:
             start += self._step
 
         return chunks
+
+    def _clean_text(self, text: str) -> str:
+        text = "".join(
+            ch for ch in text if unicodedata.category(ch) != "Cc" or ch in "\n\t"
+        )
+
+        text = unicodedata.normalize("NFKC", text)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)  # 3+ newlines indicate paragraph break
+        text = re.sub(
+            r"(?<!\n)\n(?!\n)", " ", text
+        )  # single newline is replaced with space
+
+        text = re.sub(r"[ \t]+", " ", text)  # collapse whitespaces
+        text = re.sub(r"\n ", "\n", text)  # no leading space after paragraph break
+
+        return text.strip()

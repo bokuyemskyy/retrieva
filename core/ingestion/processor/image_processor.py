@@ -16,7 +16,7 @@ class ImageProcessor(BaseFileProcessor):
         image_captioner: ImageCaptioner,
     ) -> None:
         self.chunker = chunker
-        self.image_processor = image_captioner
+        self.image_captioner = image_captioner
 
     def ingest(self, document: Document) -> List[Chunk]:
         path = Path(document.source_path).resolve()
@@ -26,7 +26,7 @@ class ImageProcessor(BaseFileProcessor):
 
         ext = path.suffix.lower()
         image_bytes = path.read_bytes()
-        text = self.image_processor.process(image_bytes, ext=ext.lstrip("."))
+        text = self.image_captioner.process(image_bytes, ext=ext.lstrip("."))
 
         return self.chunker.chunk(
             content=text,

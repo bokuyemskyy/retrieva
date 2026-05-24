@@ -1,44 +1,28 @@
+from __future__ import annotations
+
+import time
 from abc import ABC, abstractmethod
 from typing import List
 
-from core.models import Chunk
+from models import Chunk
 
 
 class BaseEmbedder(ABC):
+    vector_size: int
+
     @abstractmethod
     def embed_query(self, text: str) -> List[float]:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def embed_chunks(self, chunks: List[Chunk]) -> None:
+        raise NotImplementedError
+
+    def load(self) -> None:
         pass
 
-
-class OpenAIEmbedder(BaseEmbedder):
-    def __init__(
-        self,
-        client,
-        model: str = "text-embedding-3-small",
-        vector_size: int = 1536,
-    ) -> None:
-        self._client = client
-        self._model = model
-        self.vector_size = vector_size
-
-    def embed_query(self, text: str) -> List[float]:
-        text = text.replace("\n", " ").strip()
-        response = self._client.embeddings.create(input=[text], model=self._model)
-        return response.data[0].embedding
-
-    def embed_chunks(self, chunks: List[Chunk]) -> None:
-        if not chunks:
-            return
-
-        texts = [c.content.replace("\n", " ").strip() for c in chunks]
-        response = self._client.embeddings.create(input=texts, model=self._model)
-
-        for chunk, item in zip(chunks, response.data):
-            chunk.embedding = item.embedding
+    def unload(self) -> None:
+        pass
 
 
 class SentenceTransformerEmbedder(BaseEmbedder):
@@ -46,15 +30,21 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self,
         model: str = "BAAI/bge-large-en-v1.5",
         vector_size: int = 1024,
-        device: str = "cpu",
     ) -> None:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            raise ImportError("sentence-transformers is required") from exc
+        import torch
+        from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(model, device=device)
+        self._model = SentenceTransformer(model, device="cpu")
+        self._torch = torch
         self.vector_size = vector_size
+
+    def load(self) -> None:
+        target = "cuda" if self._torch.cuda.is_available() else "cpu"
+        self._model = self._model.to(target)
+
+    def unload(self) -> None:
+        self._model = self._model.to("cpu")
+        self._torch.cuda.empty_cache()
 
     def embed_query(self, text: str) -> List[float]:
         return self._model.encode(text, normalize_embeddings=True).tolist()
@@ -64,7 +54,17 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             return
 
         texts = [c.content for c in chunks]
-        vectors = self._model.encode(texts, normalize_embeddings=True, batch_size=64)
+        total_chars = sum(len(t) for t in texts)
+        print(f"Embedding {len(chunks)} chunks ({total_chars} chars)…")
+
+        start = time.time()
+        vectors = self._model.encode(
+            texts,
+            normalize_embeddings=True,
+            batch_size=64,
+            show_progress_bar=True,
+        )
+        print(f"Finished embedding in {time.time() - start:.2f}s.")
 
         for chunk, vec in zip(chunks, vectors):
             chunk.embedding = vec.tolist()

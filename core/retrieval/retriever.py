@@ -25,7 +25,6 @@ class DenseRetriever(BaseRetriever):
         workspace: str,
         top_k: int,
     ) -> List[SearchResult]:
-
         query_vector = self.embedder.embed_query(query)
 
         results = self.vector_store.search(
@@ -34,16 +33,7 @@ class DenseRetriever(BaseRetriever):
             workspace=workspace,
         )
 
-        return [
-            SearchResult(
-                chunk_id=r["chunk_id"],
-                document_id=r["document_id"],
-                content=r["content"],
-                score=r["score"],
-                metadata=r["metadata"],
-            )
-            for r in results
-        ]
+        return results
 
 
 class BM25Retriever(BaseRetriever):
@@ -63,16 +53,7 @@ class BM25Retriever(BaseRetriever):
             limit=top_k,
         )
 
-        return [
-            SearchResult(
-                chunk_id=r["chunk_id"],
-                document_id=r.get("document_id", ""),
-                content=r["content"],
-                score=r.get("score", 0.0),
-                metadata=r["metadata"],
-            )
-            for r in results
-        ]
+        return results
 
 
 # class HybridRetriever(BaseRetriever):

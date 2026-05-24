@@ -18,7 +18,7 @@ from core.models import (
 )
 
 
-VECTOR_SIZE = 1536
+VECTOR_SIZE = 1024
 
 
 class Base(DeclarativeBase):

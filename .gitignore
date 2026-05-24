@@ -1,5 +1,6 @@
 **/storage/
 **/vault/
+**/raw/
 
 !core/storage/
 !core/storage/**
