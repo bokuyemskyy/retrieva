@@ -27,28 +27,16 @@ class Base(DeclarativeBase):
 
 class DocumentModel(Base):
     __tablename__ = "documents"
-
-    document_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-    )
-
+    document_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
-
-    workspace: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        index=True,
-    )
-
+    workspace: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
-
     original_path: Mapped[str] = mapped_column(Text, nullable=False)
 
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
-        server_default=func.now(),
-        nullable=False,
+        TIMESTAMP, server_default=func.now(), nullable=False
     )
 
 
@@ -115,28 +103,21 @@ class PostgresVectorStorage:
         Base.metadata.create_all(self.engine)
 
     def upsert_document(self, document: Document) -> None:
-
         with self.SessionLocal() as session:
-            existing = session.get(
-                DocumentModel,
-                document.document_id,
-            )
-
+            existing = session.get(DocumentModel, document.document_id)
             if existing is None:
-                existing = DocumentModel(
-                    document_id=document.document_id,
-                )
+                existing = DocumentModel(document_id=document.document_id)
                 session.add(existing)
 
             existing.filename = document.filename
             existing.workspace = document.workspace
             existing.source_path = document.source_path
             existing.original_path = document.original_path
+            existing.content_hash = document.content_hash
 
             session.commit()
 
     def upsert_chunks(self, chunks: List[Chunk]) -> None:
-
         with self.SessionLocal() as session:
             for chunk in chunks:
                 if chunk.document_id is None:
@@ -303,9 +284,19 @@ class PostgresVectorStorage:
                     filename=row.filename,
                     source_path=row.source_path,
                     original_path=row.original_path,
+                    content_hash=row.content_hash,
                 )
                 for row in rows
             ]
+
+    def get_document_by_hash(self, workspace: str, content_hash: str) -> Optional[UUID]:
+        with self.SessionLocal() as session:
+            doc = (
+                session.query(DocumentModel)
+                .filter_by(workspace=workspace, content_hash=content_hash)
+                .first()
+            )
+            return doc.document_id if doc else None
 
     def delete_document(self, document_id: UUID) -> None:
 

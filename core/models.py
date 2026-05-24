@@ -46,6 +46,7 @@ class Document:
     filename: str
     source_path: str
     original_path: str
+    content_hash: str
 
 
 @dataclass(slots=True)
@@ -82,3 +83,4 @@ class DocumentRecord:
     filename: str
     source_path: str
     original_path: str
+    content_hash: str

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
@@ -80,24 +81,81 @@ class RAG:
     ) -> List[UUID]:
         if not original_paths:
             return []
-        self.gpu_manager.activate(self.image_captioner.vlm)
 
         prepared: List[Tuple[Document, List[Chunk]]] = []
         document_ids: List[UUID] = []
+        chunks_to_embed: List[Chunk] = []
+
+        self.gpu_manager.activate(self.image_captioner.vlm)
 
         for path_str in original_paths:
-            doc, chunks = self._prepare_document(path_str)
-            prepared.append((doc, chunks))
-            document_ids.append(doc.document_id)
+            path = Path(path_str).expanduser().resolve()
+            if not path.exists():
+                raise FileNotFoundError(f"Input file does not exist: {path}")
 
-        all_chunks: List[Chunk] = [c for _, chunks in prepared for c in chunks]
-        self.gpu_manager.activate(self.embedder)
-        self.embedder.embed_chunks(all_chunks)
+            content_hash = self._calculate_hash(path)
+
+            existing_id = self.vector_storage.get_document_by_hash(
+                self.workspace, content_hash
+            )
+            if existing_id:
+                document_ids.append(existing_id)
+                continue
+
+            document_id = uuid4()
+            document_ids.append(document_id)
+
+            stored_path = self.object_storage.save_file(
+                workspace=self.workspace,
+                document_id=document_id,
+                source_path=str(path),
+            )
+
+            document = Document(
+                document_id=document_id,
+                workspace=self.workspace,
+                filename=path.name,
+                source_path=stored_path,
+                original_path=str(path),
+                content_hash=content_hash,
+            )
+
+            cached_chunks = self.object_storage.load_chunks_cache(
+                self.workspace, content_hash
+            )
+
+            if cached_chunks is not None:
+                for chunk in cached_chunks:
+                    chunk.document_id = document_id
+                    chunk.source_path = stored_path
+                chunks = cached_chunks
+            else:
+                ext = path.suffix.lower().lstrip(".")
+                processor = self.processors.get(ext)
+                if processor is None:
+                    raise ValueError(f"Unsupported file type: {ext!r}")
+
+                try:
+                    chunks = processor.ingest(document)
+                    self.object_storage.save_chunks_cache(
+                        self.workspace, content_hash, chunks
+                    )
+                except Exception:
+                    self.object_storage.delete_file(self.workspace, document_id)
+                    raise
+
+            prepared.append((document, chunks))
+            chunks_to_embed.extend(chunks)
 
         self.gpu_manager.deactivate()
 
-        for doc, chunks in prepared:
-            self._persist(doc, chunks)
+        if chunks_to_embed:
+            self.gpu_manager.activate(self.embedder)
+            self.embedder.embed_chunks(chunks_to_embed)
+            self.gpu_manager.deactivate()
+
+            for doc, chunks in prepared:
+                self._persist(doc, chunks)
 
         return document_ids
 
@@ -144,45 +202,6 @@ class RAG:
         self.vector_storage.delete_workspace(self.workspace)
         self.object_storage.delete_workspace(self.workspace)
 
-    def _prepare_document(
-        self,
-        original_path: str,
-    ) -> Tuple[Document, List[Chunk]]:
-        path = Path(original_path).expanduser().resolve()
-
-        if not path.exists():
-            raise FileNotFoundError(f"Input file does not exist: {path}")
-
-        ext = path.suffix.lower().lstrip(".")
-        processor = self.processors.get(ext)
-        if processor is None:
-            raise ValueError(f"Unsupported file type: {ext!r}")
-
-        document_id = uuid4()
-        stored_path = self.object_storage.save_file(
-            workspace=self.workspace,
-            document_id=document_id,
-            source_path=str(path),
-        )
-
-        document = Document(
-            document_id=document_id,
-            workspace=self.workspace,
-            filename=path.name,
-            source_path=stored_path,
-            original_path=str(path),
-        )
-
-        try:
-            chunks = processor.ingest(document)
-            return document, chunks
-        except Exception:
-            try:
-                self.object_storage.delete_file(self.workspace, document_id)
-            except Exception:
-                pass
-            raise
-
     def _persist(self, document: Document, chunks: List[Chunk]) -> None:
         try:
             self.vector_storage.upsert_document(document)
@@ -197,3 +216,10 @@ class RAG:
             except Exception:
                 pass
             raise
+
+    def _calculate_hash(self, filepath: Path) -> str:
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()

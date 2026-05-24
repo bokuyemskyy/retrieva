@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import pickle
 import shutil
 from pathlib import Path
+from typing import List, Optional
 from uuid import UUID
+
+from models import Chunk
 
 
 class ObjectStorage:
@@ -39,6 +43,28 @@ class ObjectStorage:
         for file in workspace_dir.glob(f"{document_id}.*"):
             if file.is_file() or file.is_symlink():
                 file.unlink(missing_ok=True)
+
+    def save_chunks_cache(
+        self, workspace: str, content_hash: str, chunks: List[Chunk]
+    ) -> None:
+        cache_dir = self._workspace_dir(workspace) / ".cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{content_hash}.pkl"
+
+        with open(cache_file, "wb") as f:
+            pickle.dump(chunks, f)
+
+    def load_chunks_cache(
+        self, workspace: str, content_hash: str
+    ) -> Optional[List[Chunk]]:
+        cache_file = self._workspace_dir(workspace) / ".cache" / f"{content_hash}.pkl"
+        if cache_file.exists():
+            try:
+                with open(cache_file, "rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                cache_file.unlink()
+        return None
 
     def delete_workspace(self, workspace: str) -> None:
         workspace_dir = self._workspace_dir(workspace)
