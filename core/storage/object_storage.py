@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
-from models import Chunk
+from core.models import Chunk
 
 
 class ObjectStorage:
@@ -31,18 +31,9 @@ class ObjectStorage:
         shutil.copy2(source, destination)
         return str(destination)
 
-    def delete_file(self, workspace: str, document_id: UUID) -> None:
-        workspace_dir = self._workspace_dir(workspace)
-        if not workspace_dir.exists():
-            return
-
-        exact = workspace_dir / str(document_id)
-        if exact.exists():
-            exact.unlink(missing_ok=True)
-
-        for file in workspace_dir.glob(f"{document_id}.*"):
-            if file.is_file() or file.is_symlink():
-                file.unlink(missing_ok=True)
+    def delete_file(self, workspace: str, document_id: UUID, extension: str) -> None:
+        exact = self._workspace_dir(workspace) / f"{document_id}{extension}"
+        exact.unlink(missing_ok=True)
 
     def save_chunks_cache(
         self, workspace: str, content_hash: str, chunks: List[Chunk]
@@ -65,6 +56,10 @@ class ObjectStorage:
             except Exception:
                 cache_file.unlink()
         return None
+
+    def create_workspace(self, workspace: str) -> None:
+        workspace_dir = self._workspace_dir(workspace)
+        workspace_dir.mkdir(parents=True, exist_ok=True)
 
     def delete_workspace(self, workspace: str) -> None:
         workspace_dir = self._workspace_dir(workspace)

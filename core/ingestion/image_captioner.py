@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import io
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Optional
+import base64
+import requests
+
 
 _EXT_TO_MIME = {
     "jpg": "image/jpeg",
@@ -33,48 +36,63 @@ class NullVLM(BaseVLM):
         return ""
 
 
-class MoondreamVLM(BaseVLM):
-    def __init__(self, model_id: str = "vikhyatk/moondream2") -> None:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        self._model: Any = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-            dtype=torch.float16,
-        )
-
-        self._model.to("cpu")
-
-        self._tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self._torch = torch
+class OllamaVLM(BaseVLM):
+    def __init__(
+        self,
+        model_name: str = "llava",
+        base_url: str = "http://localhost:11434",
+    ) -> None:
+        self.model_name = model_name
+        self.base_url = base_url
 
     def load(self) -> None:
-        target = "cuda" if self._torch.cuda.is_available() else "cpu"
-        self._model.to(target)
+        try:
+            requests.post(
+                f"{self.base_url}/api/generate",
+                json={"model": self.model_name, "keep_alive": "5m"},
+                timeout=5,
+            )
+        except requests.exceptions.RequestException:
+            pass
 
     def unload(self) -> None:
-        self._model.to("cpu")
-        self._torch.cuda.empty_cache()
+        try:
+            requests.post(
+                f"{self.base_url}/api/generate",
+                json={"model": self.model_name, "keep_alive": 0},
+                timeout=5,
+            )
+        except requests.exceptions.RequestException:
+            pass
 
     def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
-        from PIL import Image
-
-        img = Image.open(io.BytesIO(image_bytes))
-        enc_image = self._model.encode_image(img)
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         prompt = (
             "Describe this image in detail. "
             "Include all visible text, objects, layout, colors, and any "
             "data or diagrams present. Be thorough and precise."
         )
-        answer = self._model.answer_question(enc_image, prompt, self._tokenizer)
 
-        del enc_image
-        if self._torch.cuda.is_available():
-            self._torch.cuda.empty_cache()
+        payload = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "images": [b64_image],
+            "stream": False,
+        }
 
-        return answer.strip()
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            return response.json().get("response", "").strip()
+
+        except requests.exceptions.RequestException as e:
+            print(f"Ollama VLM request failed: {e}")
+            return ""
 
 
 class ImageCaptioner:

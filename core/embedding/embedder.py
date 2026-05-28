@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import time
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 
-from models import Chunk
+from core.models import Chunk
+import requests  # type: ignore
 
 
 class BaseEmbedder(ABC):
+    provider: str
+    model_name: str
     vector_size: int
 
     @abstractmethod
@@ -15,61 +17,95 @@ class BaseEmbedder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def embed_chunks(self, chunks: List[Chunk]) -> None:
+    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
         raise NotImplementedError
 
-    def load(self) -> None:
-        pass
 
-    def unload(self) -> None:
-        pass
-
-
-class SentenceTransformerEmbedder(BaseEmbedder):
+class OllamaEmbedder(BaseEmbedder):
     def __init__(
         self,
-        model: str = "BAAI/bge-large-en-v1.5",
-        vector_size: int = 1024,
+        model_name: str,
+        vector_size: int,
+        base_url: str = "http://localhost:11434",
     ) -> None:
-        import torch
-        from sentence_transformers import SentenceTransformer
-
-        self._model = SentenceTransformer(model, device="cpu")
-        self._torch = torch
+        self.provider = "ollama"
+        self.model_name = model_name
         self.vector_size = vector_size
-
-    def load(self) -> None:
-        target = "cuda" if self._torch.cuda.is_available() else "cpu"
-        self._model = self._model.to(target)
-
-    def unload(self) -> None:
-        self._model = self._model.to("cpu")
-        self._torch.cuda.empty_cache()
+        self.base_url = base_url
 
     def embed_query(self, text: str) -> List[float]:
-        return self._model.encode(text, normalize_embeddings=True).tolist()
+        response = requests.post(
+            f"{self.base_url}/api/embeddings",
+            json={"model": self.model_name, "prompt": text},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()["embedding"]
 
-    def embed_chunks(self, chunks: List[Chunk]) -> None:
+    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
+        embeddings: List[Optional[List[float]]] = []
+        for chunk in chunks:
+            try:
+                embeddings.append(self.embed_query(chunk.content))
+            except Exception as e:
+                print(f"Failed to embed chunk {chunk.chunk_id}: {e}")
+                embeddings.append(None)
+
+        return embeddings
+
+
+class OpenAIEmbedder(BaseEmbedder):
+    def __init__(self, model_name: str, vector_size: int, api_key: str) -> None:
+        import openai
+
+        self.client = openai.Client(api_key=api_key)
+
+        self.provider = "openai"
+        self.model_name = model_name
+        self.vector_size = vector_size
+
+    def embed_query(self, text: str) -> List[float]:
+        res = self.client.embeddings.create(input=[text], model=self.model_name)
+        return res.data[0].embedding
+
+    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
         if not chunks:
-            return
+            return []
 
         texts = [c.content for c in chunks]
-        total_chars = sum(len(t) for t in texts)
-        print(
-            f"Embedding {len(chunks)} chunks ({total_chars} chars) on {self._model.device}"
-        )
 
-        start = time.time()
+        try:
+            res = self.client.embeddings.create(input=texts, model=self.model_name)
+            return [data.embedding for data in res.data]
+        except Exception as e:
+            print(f"Batch embedding failed for model {self.model_name}: {e}")
+            return [None] * len(chunks)
 
-        vectors = self._model.encode(
-            texts,
-            normalize_embeddings=True,
-            batch_size=64,
-            show_progress_bar=True,
-            device=str(self._model.device),
-        )
 
-        print(f"Finished embedding in {time.time() - start:.2f}s.")
+class EmbedderFactory:
+    _registry = {}
+    _cache = {}
 
-        for chunk, vec in zip(chunks, vectors):
-            chunk.embedding = vec.tolist()
+    @classmethod
+    def register(cls, provider: str, embedder_class: type[BaseEmbedder]):
+        cls._registry[provider] = embedder_class
+
+    @classmethod
+    def create(
+        cls, provider: str, model_name: str, vector_size: int, **kwargs
+    ) -> BaseEmbedder:
+        if provider not in cls._registry:
+            raise ValueError(f"Unknown provider '{provider}'.")
+
+        cache_key = f"{provider}_{model_name}"
+        if cache_key not in cls._cache:
+            embedder_cls = cls._registry[provider]
+            cls._cache[cache_key] = embedder_cls(
+                model_name=model_name, vector_size=vector_size, **kwargs
+            )
+
+        return cls._cache[cache_key]
+
+
+EmbedderFactory.register("ollama", OllamaEmbedder)
+EmbedderFactory.register("openai", OpenAIEmbedder)

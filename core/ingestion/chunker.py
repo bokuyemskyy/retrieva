@@ -58,8 +58,6 @@ class Chunker:
                         chunk_id=chunk_id,
                         content=window,
                         document_id=document.document_id,
-                        source_path=document.source_path,
-                        workspace=document.workspace,
                         modality=modality,
                         metadata={
                             **metadata,

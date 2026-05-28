@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
+from core.embedding.embedder import BaseEmbedder, EmbedderFactory
 from slugify import slugify
-
-from core.gpu_manager import GPUManager
+from core.storage.vector_storage import VectorStorage, Workspace, WorkspaceConfig
 from core.ingestion.chunker import Chunker
 from core.ingestion.image_captioner import ImageCaptioner
 from core.ingestion.processor.audio_processor import AudioProcessor
@@ -15,38 +15,29 @@ from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
-from embedding.embedder import BaseEmbedder
-from models import Chunk, ChunkRecord, Document, DocumentRecord, SearchResult
-from retrieval.retriever import DenseRetriever
-from storage.object_storage import ObjectStorage
-from storage.vector_storage import PostgresVectorStorage
+from core.models import Chunk, Document, SearchResult
+from core.storage.object_storage import ObjectStorage
 
 
 class RAG:
     def __init__(
         self,
-        workspace: str,
         storage_dir: str,
-        embedder: BaseEmbedder,
         llm_client,
+        llm_model: str,
         chunker: Chunker,
         image_captioner: ImageCaptioner,
         postgres_url: str,
-        llm_model: str,
         system_prompt: Optional[str] = None,
     ):
-        self.workspace = slugify(workspace)
         self.storage_dir = storage_dir
-        self.embedder = embedder
         self.llm_client = llm_client
+        self.llm_model = llm_model
         self.chunker = chunker
         self.image_captioner = image_captioner
-        self.llm_model = llm_model
-        self.gpu_manager = GPUManager()
 
         self.object_storage = ObjectStorage(storage_dir)
-        self.vector_storage: PostgresVectorStorage = PostgresVectorStorage(postgres_url)
-        self.retriever = DenseRetriever(self.vector_storage, self.embedder)
+        self.vector_storage = VectorStorage(postgres_url)
 
         self.processors: Dict[str, BaseFileProcessor] = {
             "pdf": DocumentProcessor(chunker=chunker, image_captioner=image_captioner),
@@ -66,27 +57,96 @@ class RAG:
             "Question: {query}"
         )
 
-    def add_document(
-        self,
-        original_path: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> UUID:
-        ids = self.add_documents([original_path], metadata=metadata)
+        self.active_workspace_name: Optional[str] = None
+        self.active_workspace: Optional[Workspace] = None
+        self.active_embedder: Optional[BaseEmbedder] = None
+
+    @property
+    def _workspace(self) -> Workspace:
+        assert self.active_workspace is not None
+        return self.active_workspace
+
+    @property
+    def _embedder(self) -> BaseEmbedder:
+        assert self.active_embedder is not None
+        return self.active_embedder
+
+    @property
+    def _workspace_name(self) -> str:
+        assert self.active_workspace_name is not None
+        return self.active_workspace_name
+
+    def _ensure_workspace(self) -> None:
+        if (
+            self.active_workspace is None
+            or self.active_workspace_name is None
+            or self.active_embedder is None
+        ):
+            raise RuntimeError(
+                "No workspace selected. Please call 'select_workspace(name)'."
+            )
+
+        assert self.active_workspace is not None
+
+    def select_workspace(self, name: str) -> None:
+        slug = slugify(name)
+
+        ws = self.vector_storage.workspace(slug)
+
+        self.active_workspace = ws
+        self.active_workspace_name = slug
+
+        self.active_embedder = EmbedderFactory.create(
+            provider=ws.config.model_provider,
+            model_name=ws.config.model_name,
+            vector_size=ws.config.vector_size,
+        )
+
+    def create_workspace(
+        self, name: str, embedder: BaseEmbedder, config: Optional[dict] = None
+    ) -> Workspace:
+        slug = slugify(name)
+        ws = self.vector_storage.create_workspace(
+            name=slug, embedder=embedder, config=config
+        )
+
+        self.object_storage._workspace_dir(slug).mkdir(parents=True, exist_ok=True)
+        return ws
+
+    def get_workspaces(self) -> List[WorkspaceConfig]:
+        return self.vector_storage.get_workspaces()
+
+    def delete_workspace(self, name: str) -> None:
+        slug = slugify(name)
+        self.vector_storage.delete_workspace(slug)
+        self.object_storage.delete_workspace(slug)
+
+        if self.active_workspace_name == slug:
+            self.active_workspace_name = None
+            self.active_workspace = None
+            self.active_embedder = None
+
+    def delete_all_workspaces(self) -> None:
+        self.vector_storage.delete_all_workspaces()
+        self.object_storage.delete_all_workspaces()
+        self.active_workspace_name = None
+        self.active_workspace = None
+        self.active_embedder = None
+
+    def add_document(self, original_path: str) -> UUID:
+        self._ensure_workspace()
+        ids = self.add_documents([original_path])
         return ids[0]
 
-    def add_documents(
-        self,
-        original_paths: List[str],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> List[UUID]:
+    def add_documents(self, original_paths: List[str]) -> List[UUID]:
+        self._ensure_workspace()
+
         if not original_paths:
             return []
 
         prepared: List[Tuple[Document, List[Chunk]]] = []
         document_ids: List[UUID] = []
         chunks_to_embed: List[Chunk] = []
-
-        self.gpu_manager.activate(self.image_captioner.vlm)
 
         for path_str in original_paths:
             path = Path(path_str).expanduser().resolve()
@@ -95,10 +155,9 @@ class RAG:
 
             content_hash = self._calculate_hash(path)
 
-            existing_id = self.vector_storage.get_document_by_hash(
-                self.workspace, content_hash
-            )
+            existing_id = self._workspace.get_document_by_hash(content_hash)
             if existing_id:
+                print(f"Skipping {path.name}: Document already exists.")
                 document_ids.append(existing_id)
                 continue
 
@@ -106,14 +165,13 @@ class RAG:
             document_ids.append(document_id)
 
             stored_path = self.object_storage.save_file(
-                workspace=self.workspace,
+                workspace=self._workspace_name,
                 document_id=document_id,
                 source_path=str(path),
             )
 
             document = Document(
                 document_id=document_id,
-                workspace=self.workspace,
                 filename=path.name,
                 source_path=stored_path,
                 original_path=str(path),
@@ -121,13 +179,12 @@ class RAG:
             )
 
             cached_chunks = self.object_storage.load_chunks_cache(
-                self.workspace, content_hash
+                self._workspace_name, content_hash
             )
 
             if cached_chunks is not None:
                 for chunk in cached_chunks:
                     chunk.document_id = document_id
-                    chunk.source_path = stored_path
                 chunks = cached_chunks
             else:
                 ext = path.suffix.lower().lstrip(".")
@@ -137,39 +194,62 @@ class RAG:
 
                 try:
                     chunks = processor.ingest(document)
-                    print("final")
                     self.object_storage.save_chunks_cache(
-                        self.workspace, content_hash, chunks
+                        self._workspace_name, content_hash, chunks
                     )
                 except Exception:
-                    self.object_storage.delete_file(self.workspace, document_id)
+                    self.object_storage.delete_file(
+                        self._workspace_name, document_id, ext
+                    )
                     raise
 
             prepared.append((document, chunks))
             chunks_to_embed.extend(chunks)
-            print("file complete")
 
         if chunks_to_embed:
-            self.gpu_manager.activate(self.embedder)
-            self.embedder.embed_chunks(chunks_to_embed)
-            self.gpu_manager.deactivate()
+            embeddings = self._embedder.embed_chunks(chunks_to_embed)
 
-            for doc, chunks in prepared:
-                self._persist(doc, chunks)
+            valid_chunks = []
+            valid_embeddings = []
+
+            for chunk, vec in zip(chunks_to_embed, embeddings):
+                if vec is not None:
+                    valid_chunks.append(chunk)
+                    valid_embeddings.append(vec)
+
+            for doc, _ in prepared:
+                doc_chunks = []
+                doc_embeddings = []
+
+                for c, v in zip(valid_chunks, valid_embeddings):
+                    if c.document_id == doc.document_id:
+                        doc_chunks.append(c)
+                        doc_embeddings.append(v)
+
+                self._persist(doc, doc_chunks, doc_embeddings)
 
         return document_ids
 
-    def retrieve_chunks(
-        self, query: str, top_k: int = 5, fetch_k: int = 30
-    ) -> List[SearchResult]:
-        self.gpu_manager.activate(self.embedder)
+    def retrieve_chunks(self, query: str, top_k: int = 5) -> List[SearchResult]:
+        self._ensure_workspace()
 
-        return self.retriever.retrieve(
-            workspace=self.workspace, query=query, top_k=top_k
-        )
+        query_vector = self._embedder.embed_query(query)
 
-    def query(self, query: str, top_k: int = 5, fetch_k: int = 30) -> str:
-        chunks = self.retrieve_chunks(query, top_k=top_k, fetch_k=fetch_k)
+        raw_results = self._workspace.search(query_vector, top_k=top_k)
+
+        return [
+            SearchResult(
+                chunk_id=res["chunk_id"],
+                content=res["content"],
+                score=res["score"],
+                document_id=uuid4(),
+                metadata={},
+            )
+            for res in raw_results
+        ]
+
+    def query(self, query: str, top_k: int = 5) -> str:
+        chunks = self.retrieve_chunks(query, top_k=top_k)
         return self.generate_response(query, chunks)
 
     def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
@@ -185,37 +265,50 @@ class RAG:
         )
         return response.choices[0].message.content.strip()
 
-    def get_chunks(self, limit: int = 10_000) -> List[ChunkRecord]:
-        return self.vector_storage.get_chunks(workspace=self.workspace, limit=limit)
+    def get_chunks(self, limit: int = 10_000) -> List[Chunk]:
+        self._ensure_workspace()
 
-    def get_documents(self, limit: int = 10_000) -> List[DocumentRecord]:
-        return self.vector_storage.get_documents(workspace=self.workspace, limit=limit)
+        return self._workspace.get_chunks(limit=limit)
+
+    def get_documents(self, limit: int = 10_000) -> List[Document]:
+        self._ensure_workspace()
+
+        return self._workspace.get_documents(limit=limit)
 
     def delete_document(self, document_id: UUID) -> None:
-        self.vector_storage.delete_document(document_id)
+        self._ensure_workspace()
+
+        doc = self._workspace.get_document(document_id)
+        if not doc:
+            return
+
+        ext = Path(doc.filename).suffix.lower().lstrip(".")
+
+        self._workspace.delete_document(document_id)
+
         self.object_storage.delete_file(
-            workspace=self.workspace, document_id=document_id
+            workspace=self._workspace_name, document_id=document_id, extension=ext
         )
 
-    def delete_all_workspaces(self) -> None:
-        self.vector_storage.delete_all_workspaces()
-        self.object_storage.delete_all_workspaces()
+    def _persist(
+        self, document: Document, chunks: List[Chunk], embeddings: List[List[float]]
+    ) -> None:
+        self._ensure_workspace()
 
-    def delete_current_workspace(self) -> None:
-        self.vector_storage.delete_workspace(self.workspace)
-        self.object_storage.delete_workspace(self.workspace)
-
-    def _persist(self, document: Document, chunks: List[Chunk]) -> None:
         try:
-            self.vector_storage.upsert_document(document)
-            self.vector_storage.upsert_chunks(chunks)
+            self._workspace.upsert_document(document)
+            self._workspace.upsert_chunks(chunks, embeddings)
         except Exception:
             try:
-                self.vector_storage.delete_document(document.document_id)
+                self._workspace.delete_document(document.document_id)
             except Exception:
                 pass
+
             try:
-                self.object_storage.delete_file(self.workspace, document.document_id)
+                ext = Path(document.filename).suffix.lower().lstrip(".")
+                self.object_storage.delete_file(
+                    self._workspace_name, document.document_id, ext
+                )
             except Exception:
                 pass
             raise
