@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from core.models import Chunk
 import requests  # type: ignore
 
 
+@dataclass
+class EmbedderConfig:
+    provider: str
+    model_name: str
+
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
 class BaseEmbedder(ABC):
     provider: str
     model_name: str
-    vector_size: int
+    _vector_size: Optional[int] = None
+
+    def __init__(self, config: EmbedderConfig):
+        raise NotImplementedError
 
     @abstractmethod
     def embed_query(self, text: str) -> List[float]:
@@ -20,18 +33,18 @@ class BaseEmbedder(ABC):
     def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
         raise NotImplementedError
 
+    @property
+    def vector_size(self) -> int:
+        if self._vector_size is None:
+            self._vector_size = len(self.embed_query("vector_size_probe"))
+        return self._vector_size
+
 
 class OllamaEmbedder(BaseEmbedder):
-    def __init__(
-        self,
-        model_name: str,
-        vector_size: int,
-        base_url: str = "http://localhost:11434",
-    ) -> None:
+    def __init__(self, config: EmbedderConfig):
         self.provider = "ollama"
-        self.model_name = model_name
-        self.vector_size = vector_size
-        self.base_url = base_url
+        self.model_name = config.model_name
+        self.base_url = config.base_url or "http://localhost:11434"
 
     def embed_query(self, text: str) -> List[float]:
         response = requests.post(
@@ -55,14 +68,14 @@ class OllamaEmbedder(BaseEmbedder):
 
 
 class OpenAIEmbedder(BaseEmbedder):
-    def __init__(self, model_name: str, vector_size: int, api_key: str) -> None:
+    def __init__(self, config: EmbedderConfig):
         import openai
 
-        self.client = openai.Client(api_key=api_key)
-
         self.provider = "openai"
-        self.model_name = model_name
-        self.vector_size = vector_size
+        self.model_name = config.model_name
+        self.client = openai.Client(api_key=config.api_key)
+
+        self.base_url = config.base_url
 
     def embed_query(self, text: str) -> List[float]:
         res = self.client.embeddings.create(input=[text], model=self.model_name)
@@ -83,28 +96,19 @@ class OpenAIEmbedder(BaseEmbedder):
 
 
 class EmbedderFactory:
-    _registry = {}
-    _cache = {}
+    _registry: Dict[str, type[BaseEmbedder]] = {}
 
     @classmethod
     def register(cls, provider: str, embedder_class: type[BaseEmbedder]):
         cls._registry[provider] = embedder_class
 
     @classmethod
-    def create(
-        cls, provider: str, model_name: str, vector_size: int, **kwargs
-    ) -> BaseEmbedder:
-        if provider not in cls._registry:
-            raise ValueError(f"Unknown provider '{provider}'.")
+    def create(cls, config: EmbedderConfig) -> BaseEmbedder:
+        if config.provider not in cls._registry:
+            raise ValueError(f"Unknown provider {config.provider}")
 
-        cache_key = f"{provider}_{model_name}"
-        if cache_key not in cls._cache:
-            embedder_cls = cls._registry[provider]
-            cls._cache[cache_key] = embedder_cls(
-                model_name=model_name, vector_size=vector_size, **kwargs
-            )
-
-        return cls._cache[cache_key]
+        embedder_cls = cls._registry[config.provider]
+        return embedder_cls(config)
 
 
 EmbedderFactory.register("ollama", OllamaEmbedder)

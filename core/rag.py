@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from core.embedding.embedder import BaseEmbedder, EmbedderFactory
+from core.embedding.embedder import BaseEmbedder, EmbedderConfig, EmbedderFactory
 from slugify import slugify
 from core.storage.vector_storage import VectorStorage, Workspace, WorkspaceConfig
 from core.ingestion.chunker import Chunker
@@ -91,21 +91,26 @@ class RAG:
     def select_workspace(self, name: str) -> None:
         slug = slugify(name)
 
+        # 1. Fetch the workspace wrapper from storage
         ws = self.vector_storage.workspace(slug)
 
         self.active_workspace = ws
         self.active_workspace_name = slug
 
-        self.active_embedder = EmbedderFactory.create(
-            provider=ws.config.model_provider,
-            model_name=ws.config.model_name,
-            vector_size=ws.config.vector_size,
+        embedder_config = EmbedderConfig(
+            provider=ws.config.embedding_provider,
+            model_name=ws.config.embedding_model_name,
+            api_key=ws.config.embedding_api_key,
+            base_url=ws.config.embedding_base_url,
         )
+
+        self.active_embedder = EmbedderFactory.create(config=embedder_config)
 
     def create_workspace(
         self, name: str, embedder: BaseEmbedder, config: Optional[dict] = None
     ) -> Workspace:
         slug = slugify(name)
+
         ws = self.vector_storage.create_workspace(
             name=slug, embedder=embedder, config=config
         )

@@ -38,9 +38,11 @@ class WorkspaceRegistry(SystemBase):
 @dataclass
 class WorkspaceConfig:
     name: str
-    model_name: str
-    model_provider: str
+    embedding_provider: str
+    embedding_model_name: str
     vector_size: int
+    embedding_api_key: Optional[str] = None
+    embedding_base_url: Optional[str] = None
 
 
 _MODEL_CACHE: Dict[str, Any] = {}
@@ -273,9 +275,11 @@ class VectorStorage:
 
             config = WorkspaceConfig(
                 name=reg.workspace_name,
-                model_name=reg.model_name,
-                model_provider=reg.model_provider,
+                embedding_provider=reg.model_provider,
+                embedding_model_name=reg.model_name,
                 vector_size=reg.vector_size,
+                embedding_api_key=reg.config.get("api_key"),
+                embedding_base_url=reg.config.get("base_url"),
             )
             return Workspace(self.SessionLocal, reg.schema_name, config)
 
@@ -296,9 +300,11 @@ class VectorStorage:
             return [
                 WorkspaceConfig(
                     name=reg.workspace_name,
-                    model_name=reg.model_name,
-                    model_provider=reg.model_provider,
+                    embedding_provider=reg.model_provider,
+                    embedding_model_name=reg.model_name,
                     vector_size=reg.vector_size,
+                    embedding_api_key=reg.config.get("api_key"),
+                    embedding_base_url=reg.config.get("base_url"),
                 )
                 for reg in registries
             ]
