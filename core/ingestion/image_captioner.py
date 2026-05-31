@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 from PIL import Image
 
 import base64
-import requests
 
 
 @dataclass
@@ -37,38 +36,22 @@ class NullVLM(BaseVLM):
 
 
 class OllamaVLM(BaseVLM):
-    def __init__(self, config: VLMConfig):
+    def __init__(self, config: VLMConfig) -> None:
         super().__init__(config)
-        self.base_url = config.base_url or "http://localhost:11434"
+
+        import ollama
+
+        self.client = ollama.Client(host=config.base_url)
 
     def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
-        b64_image = base64.b64encode(image_bytes).decode("utf-8")
-
         prompt = (
             "Describe this image in detail. "
             "Include all visible text, objects, layout, colors, and any "
             "data or diagrams present. Be thorough and precise."
         )
-
-        payload = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "images": [b64_image],
-            "stream": False,
-        }
-
-        try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=120,
-            )
-            response.raise_for_status()
-            return response.json().get("response", "").strip()
-
-        except requests.exceptions.RequestException as e:
-            print(f"Ollama VLM request failed: {e}")
-            return ""
+        
+        response = self.client.generate(model=self.model_name, prompt=prompt, images=[image_bytes])
+        return response["response"]
 
 
 class OpenAIVLM(BaseVLM):
