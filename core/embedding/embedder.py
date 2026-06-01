@@ -23,7 +23,8 @@ class BaseEmbedder(ABC):
     _vector_size: Optional[int] = None
 
     def __init__(self, config: EmbedderConfig):
-        raise NotImplementedError
+        self.provider = config.provider
+        self.model_name = config.model_name
 
     @abstractmethod
     def embed_query(self, text: str) -> List[float]:
@@ -42,8 +43,7 @@ class BaseEmbedder(ABC):
 
 class OllamaEmbedder(BaseEmbedder):
     def __init__(self, config: EmbedderConfig):
-        self.provider = "ollama"
-        self.model_name = config.model_name
+        super().__init__(config)
         self.base_url = config.base_url or "http://localhost:11434"
 
     def embed_query(self, text: str) -> List[float]:
@@ -69,13 +69,14 @@ class OllamaEmbedder(BaseEmbedder):
 
 class OpenAIEmbedder(BaseEmbedder):
     def __init__(self, config: EmbedderConfig):
-        import openai
+        super().__init__(config)
 
-        self.provider = "openai"
-        self.model_name = config.model_name
-        self.client = openai.Client(api_key=config.api_key)
+        from openai import OpenAI
 
-        self.base_url = config.base_url
+        self.client = OpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
 
     def embed_query(self, text: str) -> List[float]:
         res = self.client.embeddings.create(input=[text], model=self.model_name)
@@ -103,12 +104,22 @@ class EmbedderFactory:
         cls._registry[provider] = embedder_class
 
     @classmethod
-    def create(cls, config: EmbedderConfig) -> BaseEmbedder:
+    def create(cls, config: EmbedderConfig, validate: bool = True) -> BaseEmbedder:
         if config.provider not in cls._registry:
             raise ValueError(f"Unknown provider {config.provider}")
 
         embedder_cls = cls._registry[config.provider]
-        return embedder_cls(config)
+        client = embedder_cls(config)
+
+        if validate:
+            try:
+                client.vector_size
+            except Exception as e:
+                raise RuntimeError(
+                    f"Model validation failed for {config.model_name}: {str(e)}"
+                )
+
+        return client
 
 
 EmbedderFactory.register("ollama", OllamaEmbedder)

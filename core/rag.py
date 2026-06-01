@@ -5,13 +5,21 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
+from ingestion.processor.base_file_processor import BaseFileProcessor
+from retrieval.llm import BaseLLM, LLMConfig, LLMFactory
+from retrieval.reranker import BaseReranker, CrossEncoderReranker
+
 from core.embedding.embedder import BaseEmbedder, EmbedderConfig, EmbedderFactory
 from slugify import slugify
-from core.storage.vector_storage import VectorStorage, Workspace, WorkspaceConfig
+from core.storage.vector_storage import WorkspaceManager, Workspace, WorkspaceConfig
 from core.ingestion.chunker import Chunker
-from core.ingestion.image_captioner import ImageCaptioner
+from core.ingestion.image_captioner import (
+    BaseVLM,
+    ImageCaptioner,
+    VLMConfig,
+    VLMFactory,
+)
 from core.ingestion.processor.audio_processor import AudioProcessor
-from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
@@ -23,32 +31,32 @@ class RAG:
     def __init__(
         self,
         storage_dir: str,
-        llm_client,
-        llm_model: str,
-        chunker: Chunker,
-        image_captioner: ImageCaptioner,
         postgres_url: str,
+        use_reranker: bool = False,
         system_prompt: Optional[str] = None,
     ):
         self.storage_dir = storage_dir
-        self.llm_client = llm_client
-        self.llm_model = llm_model
-        self.chunker = chunker
-        self.image_captioner = image_captioner
+
+        self.chunker = Chunker(
+            chunk_size=800,
+            chunk_overlap=120,
+        )
+        self.reranker: Optional[BaseReranker] = (
+            CrossEncoderReranker() if use_reranker else None
+        )
+        self.processors: Dict[str, BaseFileProcessor] = {}
+
+        self.llm_model: Optional[BaseLLM] = None
+        self.vlm_model: Optional[BaseVLM] = None
+        self.image_captioner: Optional[ImageCaptioner] = None
+
+        self.set_vlm(VLMConfig(provider="null", model_name="null"))
 
         self.object_storage = ObjectStorage(storage_dir)
-        self.vector_storage = VectorStorage(postgres_url)
+        self.workspace_manager = WorkspaceManager(postgres_url)
 
-        self.processors: Dict[str, BaseFileProcessor] = {
-            "pdf": DocumentProcessor(chunker=chunker, image_captioner=image_captioner),
-            "txt": TextProcessor(chunker=chunker),
-            "md": TextProcessor(chunker=chunker),
-            "png": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
-            "jpg": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
-            "jpeg": ImageProcessor(chunker=chunker, image_captioner=image_captioner),
-            "wav": AudioProcessor(chunker=chunker),
-            "mp3": AudioProcessor(chunker=chunker),
-        }
+        self.processors: Dict[str, BaseFileProcessor] = {}
+        self._refresh_processors()
 
         self.system_prompt = system_prompt or (
             "Answer the question using only the provided context. "
@@ -88,42 +96,67 @@ class RAG:
 
         assert self.active_workspace is not None
 
+    def set_llm(self, config: LLMConfig) -> None:
+        self.llm_model = LLMFactory.create(config)
+
+    def set_vlm(self, config: VLMConfig) -> None:
+        self.vlm_model = VLMFactory.create(config)
+        self.image_captioner = ImageCaptioner(vlm=self.vlm_model)
+        self._refresh_processors()
+
+    def set_system_prompt(self, prompt: str) -> None:
+        self.system_prompt = prompt
+
+    def _refresh_processors(self) -> None:
+        if self.image_captioner is None:
+            raise
+        self.processors = {
+            "pdf": DocumentProcessor(
+                chunker=self.chunker, image_captioner=self.image_captioner
+            ),
+            "txt": TextProcessor(chunker=self.chunker),
+            "md": TextProcessor(chunker=self.chunker),
+            "png": ImageProcessor(
+                chunker=self.chunker, image_captioner=self.image_captioner
+            ),
+            "jpg": ImageProcessor(
+                chunker=self.chunker, image_captioner=self.image_captioner
+            ),
+            "jpeg": ImageProcessor(
+                chunker=self.chunker, image_captioner=self.image_captioner
+            ),
+            "wav": AudioProcessor(chunker=self.chunker),
+            "mp3": AudioProcessor(chunker=self.chunker),
+        }
+
     def select_workspace(self, name: str) -> None:
         slug = slugify(name)
 
-        # 1. Fetch the workspace wrapper from storage
-        ws = self.vector_storage.workspace(slug)
+        ws = self.workspace_manager.workspace(slug)
 
         self.active_workspace = ws
         self.active_workspace_name = slug
+        self.active_embedder = EmbedderFactory.create(config=ws.config.embedder_config)
 
-        embedder_config = EmbedderConfig(
-            provider=ws.config.embedding_provider,
-            model_name=ws.config.embedding_model_name,
-            api_key=ws.config.embedding_api_key,
-            base_url=ws.config.embedding_base_url,
-        )
-
-        self.active_embedder = EmbedderFactory.create(config=embedder_config)
-
-    def create_workspace(
-        self, name: str, embedder: BaseEmbedder, config: Optional[dict] = None
-    ) -> Workspace:
+    def create_workspace(self, name: str, embedder_config: EmbedderConfig) -> Workspace:
         slug = slugify(name)
 
-        ws = self.vector_storage.create_workspace(
-            name=slug, embedder=embedder, config=config
+        # validates the model
+        embedder = EmbedderFactory.create(embedder_config)
+
+        ws = self.workspace_manager.create_workspace(
+            name=slug, embedder_config=embedder_config, vector_size=embedder.vector_size
         )
 
         self.object_storage._workspace_dir(slug).mkdir(parents=True, exist_ok=True)
         return ws
 
     def get_workspaces(self) -> List[WorkspaceConfig]:
-        return self.vector_storage.get_workspaces()
+        return self.workspace_manager.get_workspaces()
 
     def delete_workspace(self, name: str) -> None:
         slug = slugify(name)
-        self.vector_storage.delete_workspace(slug)
+        self.workspace_manager.delete_workspace(slug)
         self.object_storage.delete_workspace(slug)
 
         if self.active_workspace_name == slug:
@@ -132,7 +165,7 @@ class RAG:
             self.active_embedder = None
 
     def delete_all_workspaces(self) -> None:
-        self.vector_storage.delete_all_workspaces()
+        self.workspace_manager.delete_all_workspaces()
         self.object_storage.delete_all_workspaces()
         self.active_workspace_name = None
         self.active_workspace = None
@@ -253,22 +286,35 @@ class RAG:
             for res in raw_results
         ]
 
+    def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
+        if not chunks:
+            return "No relevant information was found in the knowledge base."
+        if not self.llm_model:
+            return "No LLM model selected."
+
+        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
+        prompt = self.system_prompt.format(query=query, context=context)
+        return self.llm_model.generate("", prompt)
+
+    def generate_response_stream(self, query: str, chunks: List[SearchResult]):
+        if not chunks:
+            yield "No relevant information was found in the knowledge base."
+            return
+        if not self.llm_model:
+            yield "No LLM model selected."
+            return
+
+        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
+        prompt = self.system_prompt.format(query=query, context=context)
+        yield from self.llm_model.generate_stream("", prompt)
+
     def query(self, query: str, top_k: int = 5) -> str:
         chunks = self.retrieve_chunks(query, top_k=top_k)
         return self.generate_response(query, chunks)
 
-    def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
-        if not chunks:
-            return "No relevant information was found in the knowledge base."
-
-        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
-        prompt = self.system_prompt.format(query=query, context=context)
-
-        response = self.llm_client.chat.completions.create(
-            model=self.llm_model,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.choices[0].message.content.strip()
+    def query_stream(self, query: str, top_k: int = 5):
+        chunks = self.retrieve_chunks(query, top_k=top_k)
+        yield from self.generate_response_stream(query, chunks)
 
     def get_chunks(self, limit: int = 10_000) -> List[Chunk]:
         self._ensure_workspace()

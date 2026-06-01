@@ -1,11 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-from core.embedding.embedder import BaseEmbedder
+from core.embedding.embedder import EmbedderConfig
 from core.models import Chunk, Document
 from sqlalchemy import (
     String,
-    Integer,
     Text,
     ForeignKey,
     create_engine,
@@ -28,21 +27,17 @@ class WorkspaceRegistry(SystemBase):
     workspace_name: Mapped[str] = mapped_column(String, primary_key=True)
     schema_name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
 
-    vector_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    model_name: Mapped[str] = mapped_column(String, nullable=False)
-    model_provider: Mapped[str] = mapped_column(String, nullable=False)
-
-    config: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    vector_size: Mapped[int]
+    embedder_config: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
 
 
 @dataclass
 class WorkspaceConfig:
     name: str
-    embedding_provider: str
-    embedding_model_name: str
     vector_size: int
-    embedding_api_key: Optional[str] = None
-    embedding_base_url: Optional[str] = None
+    embedder_config: EmbedderConfig
 
 
 _MODEL_CACHE: Dict[str, Any] = {}
@@ -226,7 +221,7 @@ class Workspace:
             ]
 
 
-class VectorStorage:
+class WorkspaceManager:
     def __init__(self, db_url: str):
         self.engine = create_engine(db_url)
         self.SessionLocal = sessionmaker(
@@ -238,23 +233,17 @@ class VectorStorage:
         SystemBase.metadata.create_all(self.engine)
 
     def create_workspace(
-        self,
-        name: str,
-        embedder: BaseEmbedder,
-        config: Optional[dict] = None,
+        self, name: str, embedder_config: EmbedderConfig, vector_size: int
     ) -> Workspace:
         schema_name = f"ws_{name}"
-        config = config or {}
 
         with self.SessionLocal() as session:
             if not session.get(WorkspaceRegistry, name):
                 reg = WorkspaceRegistry(
                     workspace_name=name,
                     schema_name=schema_name,
-                    vector_size=embedder.vector_size,
-                    model_name=embedder.model_name,
-                    model_provider=embedder.provider,
-                    config=config,
+                    embedder_config=asdict(embedder_config),
+                    vector_size=vector_size,
                 )
                 session.add(reg)
                 session.commit()
@@ -262,7 +251,7 @@ class VectorStorage:
         with self.engine.begin() as conn:
             conn.execute(schema.CreateSchema(schema_name, if_not_exists=True))
 
-        WorkspaceBase, _, _ = _get_workspace_models(schema_name, embedder.vector_size)
+        WorkspaceBase, _, _ = _get_workspace_models(schema_name, vector_size)
         WorkspaceBase.metadata.create_all(self.engine)
 
         return self.workspace(name)
@@ -273,13 +262,17 @@ class VectorStorage:
             if not reg:
                 raise ValueError(f"Workspace '{name}' not found.")
 
+            embedder_config = EmbedderConfig(
+                provider=reg.embedder_config.get("provider", ""),
+                model_name=reg.embedder_config.get("model_name", ""),
+                api_key=reg.embedder_config.get("api_key"),
+                base_url=reg.embedder_config.get("base_url"),
+            )
+
             config = WorkspaceConfig(
                 name=reg.workspace_name,
-                embedding_provider=reg.model_provider,
-                embedding_model_name=reg.model_name,
                 vector_size=reg.vector_size,
-                embedding_api_key=reg.config.get("api_key"),
-                embedding_base_url=reg.config.get("base_url"),
+                embedder_config=embedder_config,
             )
             return Workspace(self.SessionLocal, reg.schema_name, config)
 
@@ -297,14 +290,17 @@ class VectorStorage:
     def get_workspaces(self) -> List[WorkspaceConfig]:
         with self.SessionLocal() as session:
             registries = session.query(WorkspaceRegistry).all()
+
             return [
                 WorkspaceConfig(
                     name=reg.workspace_name,
-                    embedding_provider=reg.model_provider,
-                    embedding_model_name=reg.model_name,
                     vector_size=reg.vector_size,
-                    embedding_api_key=reg.config.get("api_key"),
-                    embedding_base_url=reg.config.get("base_url"),
+                    embedder_config=EmbedderConfig(
+                        provider=reg.embedder_config.get("provider", ""),
+                        model_name=reg.embedder_config.get("model_name", ""),
+                        api_key=reg.embedder_config.get("api_key"),
+                        base_url=reg.embedder_config.get("base_url"),
+                    ),
                 )
                 for reg in registries
             ]
