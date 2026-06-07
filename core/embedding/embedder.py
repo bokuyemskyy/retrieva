@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from core.models import Chunk
+from core.ingestion.chunker import Chunker
 
 @dataclass
 class EmbedderConfig:
     provider: str
     model_name: str
+
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
 
     api_key: Optional[str] = None
     base_url: Optional[str] = None
@@ -18,11 +22,16 @@ class EmbedderConfig:
 class BaseEmbedder(ABC):
     provider: str
     model_name: str
+    chunker: Chunker
     _vector_size: Optional[int] = None
 
     def __init__(self, config: EmbedderConfig):
         self.provider = config.provider
         self.model_name = config.model_name
+        self.chunker = Chunker(
+            chunk_size=config.chunk_size or 800,
+            chunk_overlap=config.chunk_overlap or 120,
+        )
 
     @abstractmethod
     def embed_query(self, text: str) -> List[float]:

@@ -10,10 +10,10 @@ from core.models import Chunk, Modality, Document
 
 
 class TextProcessor(BaseFileProcessor):
-    def __init__(self, chunker: Chunker) -> None:
-        self.chunker = chunker
+    def __init__(self) -> None:
+        pass
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document, chunker: Chunker) -> List[Chunk]:
         path = Path(document.source_path).resolve()
 
         if not path.is_file():
@@ -21,7 +21,7 @@ class TextProcessor(BaseFileProcessor):
 
         text = path.read_text(encoding="utf-8", errors="ignore")
 
-        return self.chunker.chunk(
+        return chunker.chunk(
             content=text,
             document=document,
             modality=Modality.TEXT,

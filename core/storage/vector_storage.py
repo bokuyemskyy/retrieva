@@ -265,6 +265,8 @@ class WorkspaceManager:
             embedder_config = EmbedderConfig(
                 provider=reg.embedder_config.get("provider", ""),
                 model_name=reg.embedder_config.get("model_name", ""),
+                chunk_size=reg.embedder_config.get("chunk_size", ""),
+                chunk_overlap=reg.embedder_config.get("chunk_overlap", ""),
                 api_key=reg.embedder_config.get("api_key"),
                 base_url=reg.embedder_config.get("base_url"),
             )

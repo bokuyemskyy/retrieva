@@ -37,10 +37,6 @@ class RAG:
     ):
         self.storage_dir = storage_dir
 
-        self.chunker = Chunker(
-            chunk_size=800,
-            chunk_overlap=120,
-        )
         self.reranker: Optional[BaseReranker] = (
             CrossEncoderReranker() if use_reranker else None
         )
@@ -111,22 +107,14 @@ class RAG:
         if self.image_captioner is None:
             raise
         self.processors = {
-            "pdf": DocumentProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "txt": TextProcessor(chunker=self.chunker),
-            "md": TextProcessor(chunker=self.chunker),
-            "png": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "jpg": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "jpeg": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "wav": AudioProcessor(chunker=self.chunker),
-            "mp3": AudioProcessor(chunker=self.chunker),
+            "pdf": DocumentProcessor(image_captioner=self.image_captioner),
+            "txt": TextProcessor(),
+            "md": TextProcessor(),
+            "png": ImageProcessor(image_captioner=self.image_captioner),
+            "jpg": ImageProcessor(image_captioner=self.image_captioner),
+            "jpeg": ImageProcessor(image_captioner=self.image_captioner),
+            "wav": AudioProcessor(),
+            "mp3": AudioProcessor(),
         }
 
     def select_workspace(self, name: str) -> None:
@@ -231,7 +219,7 @@ class RAG:
                     raise ValueError(f"Unsupported file type: {ext!r}")
 
                 try:
-                    chunks = processor.ingest(document)
+                    chunks = processor.ingest(document, self._embedder.chunker)
                     self.object_storage.save_chunks_cache(
                         self._workspace_name, content_hash, chunks
                     )

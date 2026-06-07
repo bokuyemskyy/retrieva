@@ -28,19 +28,17 @@ def _is_claimed(
 class DocumentProcessor(BaseFileProcessor):
     def __init__(
         self,
-        chunker: Chunker,
         image_captioner: ImageCaptioner,
         min_image_area: int = 25_000,
         overlap_threshold: float = 0.5,
         max_vector_elements: int = 2000,
     ) -> None:
-        self.chunker = chunker
         self.image_captioner = image_captioner
         self._min_image_area = min_image_area
         self._overlap_threshold = overlap_threshold
         self._max_vector_elements = max_vector_elements
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document, chunker: Chunker) -> List[Chunk]:
         path = Path(document.source_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(document.source_path)
@@ -73,7 +71,7 @@ class DocumentProcessor(BaseFileProcessor):
                         if not md_table:
                             continue
                         chunks.extend(
-                            self.chunker.chunk(
+                            chunker.chunk(
                                 content=f"Table from page {page_idx}:\n\n{md_table}",
                                 document=document,
                                 modality=Modality.PDF_TABLE,
@@ -95,7 +93,7 @@ class DocumentProcessor(BaseFileProcessor):
             text = "\n\n".join(t.strip() for t in text_parts if t.strip())
             if text:
                 chunks.extend(
-                    self.chunker.chunk(
+                    chunker.chunk(
                         content=text,
                         document=document,
                         modality=Modality.PDF_TEXT,
@@ -110,7 +108,7 @@ class DocumentProcessor(BaseFileProcessor):
                     if _is_claimed(img_rect, claimed, self._overlap_threshold):
                         continue
                     new_chunks = self._process_image(
-                        doc, xref, document, base_meta, page_area
+                        doc, xref, document, base_meta, page_area, chunker
                     )
                     if new_chunks:
                         chunks.extend(new_chunks)
@@ -132,7 +130,7 @@ class DocumentProcessor(BaseFileProcessor):
                     )
                     if vlm_text:
                         chunks.extend(
-                            self.chunker.chunk(
+                            chunker.chunk(
                                 content=vlm_text,
                                 document=document,
                                 modality=Modality.PDF_IMAGE,
@@ -162,7 +160,7 @@ class DocumentProcessor(BaseFileProcessor):
                     )
                     if vlm_text:
                         chunks.extend(
-                            self.chunker.chunk(
+                            chunker.chunk(
                                 content=vlm_text,
                                 document=document,
                                 modality=Modality.PDF_IMAGE,
@@ -188,6 +186,7 @@ class DocumentProcessor(BaseFileProcessor):
         document: Document,
         base_meta: dict,
         page_area: float,
+        chunker: Chunker,
     ) -> List[Chunk]:
         raw = doc.extract_image(xref)
         image_bytes: bytes = raw["image"]
@@ -201,7 +200,7 @@ class DocumentProcessor(BaseFileProcessor):
         if not text:
             return []
 
-        return self.chunker.chunk(
+        return chunker.chunk(
             content=text,
             document=document,
             modality=Modality.PDF_IMAGE,

@@ -12,13 +12,11 @@ from core.models import Chunk, Modality, Document
 class ImageProcessor(BaseFileProcessor):
     def __init__(
         self,
-        chunker: Chunker,
         image_captioner: ImageCaptioner,
     ) -> None:
-        self.chunker = chunker
         self.image_captioner = image_captioner
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document, chunker: Chunker) -> List[Chunk]:
         path = Path(document.source_path).resolve()
 
         if not path.is_file():
@@ -28,7 +26,7 @@ class ImageProcessor(BaseFileProcessor):
         image_bytes = path.read_bytes()
         text = self.image_captioner.process(image_bytes, ext=ext.lstrip("."))
 
-        return self.chunker.chunk(
+        return chunker.chunk(
             content=text,
             document=document,
             modality=Modality.IMAGE,
