@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from uuid import UUID, uuid4
 
 from slugify import slugify
@@ -23,8 +23,10 @@ from core.ingestion.processor.text_processor import TextProcessor
 from core.models import Chunk, Document, SearchResult
 from core.storage.object_storage import ObjectStorage
 from core.storage.vector_storage import Workspace, WorkspaceConfig, WorkspaceManager
-from retrieval.llm import BaseLLM, LLMConfig, LLMFactory
-from retrieval.reranker import BaseReranker, CrossEncoderReranker
+from core.retrieval.llm import BaseLLM, LLMConfig, LLMFactory
+from core.retrieval.reranker import BaseReranker, CrossEncoderReranker
+
+DocumentInput = Union[str, Path, Tuple[str, bytes]]
 
 
 class RAG:
@@ -163,31 +165,42 @@ class RAG:
         self.active_workspace = None
         self.active_embedder = None
 
-    def add_document(self, original_path: str) -> UUID:
+    def add_document(self, document: DocumentInput) -> UUID:
         self._ensure_workspace()
-        ids = self.add_documents([original_path])
+        ids = self.add_documents([document])
         return ids[0]
 
-    def add_documents(self, original_paths: List[str]) -> List[UUID]:
+    def add_documents(self, documents: List[DocumentInput]) -> List[UUID]:
         self._ensure_workspace()
 
-        if not original_paths:
+        if not documents:
             return []
 
         prepared: List[Tuple[Document, List[Chunk]]] = []
         document_ids: List[UUID] = []
         chunks_to_embed: List[Chunk] = []
 
-        for path_str in original_paths:
-            path = Path(path_str).expanduser().resolve()
-            if not path.exists():
-                raise FileNotFoundError(f"Input file does not exist: {path}")
+        for doc_input in documents:
+            if isinstance(doc_input, tuple):
+                filename, data = doc_input
+                original_path = filename
+                content_hash = hashlib.sha256(data).hexdigest()
+                ext = Path(filename).suffix.lower().lstrip(".")
 
-            content_hash = self._calculate_hash(path)
+            else:
+                path = Path(doc_input).expanduser().resolve()
+                if not path.exists():
+                    raise FileNotFoundError(f"Input file does not exist: {path}")
+
+                filename = path.name
+                original_path = str(path)
+                data = None
+                content_hash = self._calculate_hash(path)
+                ext = path.suffix.lower().lstrip(".")
+
             existing_id = self._workspace.get_document_by_hash(content_hash)
-
             if existing_id:
-                print(f"Skipping {path.name}: Document already exists.")
+                print(f"Skipping {filename}: Document already exists.")
                 document_ids.append(existing_id)
                 continue
 
@@ -197,14 +210,15 @@ class RAG:
             stored_path = self.object_storage.save_file(
                 workspace=self._workspace_name,
                 document_id=document_id,
-                source_path=str(path),
+                source_path=original_path,
+                data=data,
             )
 
             document = Document(
                 document_id=document_id,
-                filename=path.name,
+                filename=filename,
                 source_path=stored_path,
-                original_path=str(path),
+                original_path=original_path,
                 content_hash=content_hash,
             )
 
@@ -217,13 +231,13 @@ class RAG:
                     chunk.document_id = document_id
                 chunks = cached_chunks
             else:
-                ext = path.suffix.lower().lstrip(".")
                 processor = self.processors.get(ext)
                 if processor is None:
                     raise ValueError(f"Unsupported file type: {ext!r}")
 
                 try:
                     chunks = processor.ingest(document)
+
                     self.object_storage.save_chunks_cache(
                         self._workspace_name, content_hash, chunks
                     )

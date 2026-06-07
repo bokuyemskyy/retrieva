@@ -19,14 +19,13 @@ class AudioProcessor(BaseFileProcessor):
         compute_type: str = "int8",
         language: Optional[str] = "en",
     ) -> None:
-        self.chunker = chunker
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._language = language
         self._model = None
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document, chunker: BaseChunker) -> List[Chunk]:
         path = Path(document.source_path).resolve()
 
         if not path.is_file():
@@ -34,7 +33,7 @@ class AudioProcessor(BaseFileProcessor):
 
         transcript = self._transcribe(path)
 
-        return self.chunker.chunk(
+        return chunker.chunk(
             content=transcript,
             document=document,
             modality=Modality.AUDIO,

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from core.models import Chunk
-import requests  # type: ignore
 
 
 @dataclass
@@ -44,27 +43,27 @@ class BaseEmbedder(ABC):
 class OllamaEmbedder(BaseEmbedder):
     def __init__(self, config: EmbedderConfig):
         super().__init__(config)
-        self.base_url = config.base_url or "http://localhost:11434"
+
+        import ollama
+
+        self.client = ollama.Client(host=config.base_url)
 
     def embed_query(self, text: str) -> List[float]:
-        response = requests.post(
-            f"{self.base_url}/api/embeddings",
-            json={"model": self.model_name, "prompt": text},
-            timeout=10,
-        )
-        response.raise_for_status()
-        return response.json()["embedding"]
+        response = self.client.embed(model=self.model_name, input=[text])
+        return response["embeddings"][0]
 
     def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
-        embeddings: List[Optional[List[float]]] = []
-        for chunk in chunks:
-            try:
-                embeddings.append(self.embed_query(chunk.content))
-            except Exception as e:
-                print(f"Failed to embed chunk {chunk.chunk_id}: {e}")
-                embeddings.append(None)
+        if not chunks:
+            return []
 
-        return embeddings
+        texts = [c.content for c in chunks]
+
+        try:
+            response = self.client.embed(input=texts, model=self.model_name)
+            return response["embeddings"]
+        except Exception as e:
+            print(f"Batch embedding failed for model {self.model_name}: {e}")
+            return [None] * len(chunks)
 
 
 class OpenAIEmbedder(BaseEmbedder):
