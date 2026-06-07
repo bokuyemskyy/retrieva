@@ -5,14 +5,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from ingestion.processor.base_file_processor import BaseFileProcessor
-from retrieval.llm import BaseLLM, LLMConfig, LLMFactory
-from retrieval.reranker import BaseReranker, CrossEncoderReranker
+from slugify import slugify
 
 from core.embedding.embedder import BaseEmbedder, EmbedderConfig, EmbedderFactory
-from slugify import slugify
-from core.storage.vector_storage import WorkspaceManager, Workspace, WorkspaceConfig
-from core.ingestion.chunker import Chunker
+from core.ingestion.chunker import BaseChunker, RecursiveChunker
 from core.ingestion.image_captioner import (
     BaseVLM,
     ImageCaptioner,
@@ -20,11 +16,15 @@ from core.ingestion.image_captioner import (
     VLMFactory,
 )
 from core.ingestion.processor.audio_processor import AudioProcessor
+from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
 from core.models import Chunk, Document, SearchResult
 from core.storage.object_storage import ObjectStorage
+from core.storage.vector_storage import Workspace, WorkspaceConfig, WorkspaceManager
+from retrieval.llm import BaseLLM, LLMConfig, LLMFactory
+from retrieval.reranker import BaseReranker, CrossEncoderReranker
 
 
 class RAG:
@@ -32,31 +32,26 @@ class RAG:
         self,
         storage_dir: str,
         postgres_url: str,
-        use_reranker: bool = False,
         system_prompt: Optional[str] = None,
     ):
         self.storage_dir = storage_dir
 
-        self.chunker = Chunker(
+        self.chunker: BaseChunker = RecursiveChunker(
             chunk_size=800,
             chunk_overlap=120,
         )
-        self.reranker: Optional[BaseReranker] = (
-            CrossEncoderReranker() if use_reranker else None
-        )
-        self.processors: Dict[str, BaseFileProcessor] = {}
+
+        self.reranker: Optional[BaseReranker] = CrossEncoderReranker()
 
         self.llm_model: Optional[BaseLLM] = None
         self.vlm_model: Optional[BaseVLM] = None
         self.image_captioner: Optional[ImageCaptioner] = None
-
-        self.set_vlm(VLMConfig(provider="null", model_name="null"))
+        self.processors: Dict[str, BaseFileProcessor] = {}
 
         self.object_storage = ObjectStorage(storage_dir)
         self.workspace_manager = WorkspaceManager(postgres_url)
 
-        self.processors: Dict[str, BaseFileProcessor] = {}
-        self._refresh_processors()
+        self.set_vlm(VLMConfig(provider="null", model_name="null"))
 
         self.system_prompt = system_prompt or (
             "Answer the question using only the provided context. "
@@ -71,30 +66,28 @@ class RAG:
 
     @property
     def _workspace(self) -> Workspace:
-        assert self.active_workspace is not None
+        assert self.active_workspace is not None, "Workspace is not active."
         return self.active_workspace
 
     @property
     def _embedder(self) -> BaseEmbedder:
-        assert self.active_embedder is not None
+        assert self.active_embedder is not None, "Embedder is not active."
         return self.active_embedder
 
     @property
     def _workspace_name(self) -> str:
-        assert self.active_workspace_name is not None
+        assert self.active_workspace_name is not None, "Workspace name is missing."
         return self.active_workspace_name
 
     def _ensure_workspace(self) -> None:
-        if (
-            self.active_workspace is None
-            or self.active_workspace_name is None
-            or self.active_embedder is None
+        if not (
+            self.active_workspace
+            and self.active_workspace_name
+            and self.active_embedder
         ):
             raise RuntimeError(
                 "No workspace selected. Please call 'select_workspace(name)'."
             )
-
-        assert self.active_workspace is not None
 
     def set_llm(self, config: LLMConfig) -> None:
         self.llm_model = LLMFactory.create(config)
@@ -109,29 +102,30 @@ class RAG:
 
     def _refresh_processors(self) -> None:
         if self.image_captioner is None:
-            raise
+            return
+
+        doc_proc = DocumentProcessor(
+            chunker=self.chunker, image_captioner=self.image_captioner
+        )
+        img_proc = ImageProcessor(
+            chunker=self.chunker, image_captioner=self.image_captioner
+        )
+        txt_proc = TextProcessor(chunker=self.chunker)
+        aud_proc = AudioProcessor(chunker=self.chunker)
+
         self.processors = {
-            "pdf": DocumentProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "txt": TextProcessor(chunker=self.chunker),
-            "md": TextProcessor(chunker=self.chunker),
-            "png": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "jpg": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "jpeg": ImageProcessor(
-                chunker=self.chunker, image_captioner=self.image_captioner
-            ),
-            "wav": AudioProcessor(chunker=self.chunker),
-            "mp3": AudioProcessor(chunker=self.chunker),
+            "pdf": doc_proc,
+            "txt": txt_proc,
+            "md": txt_proc,
+            "png": img_proc,
+            "jpg": img_proc,
+            "jpeg": img_proc,
+            "wav": aud_proc,
+            "mp3": aud_proc,
         }
 
     def select_workspace(self, name: str) -> None:
         slug = slugify(name)
-
         ws = self.workspace_manager.workspace(slug)
 
         self.active_workspace = ws
@@ -140,8 +134,6 @@ class RAG:
 
     def create_workspace(self, name: str, embedder_config: EmbedderConfig) -> Workspace:
         slug = slugify(name)
-
-        # validates the model
         embedder = EmbedderFactory.create(embedder_config)
 
         ws = self.workspace_manager.create_workspace(
@@ -192,8 +184,8 @@ class RAG:
                 raise FileNotFoundError(f"Input file does not exist: {path}")
 
             content_hash = self._calculate_hash(path)
-
             existing_id = self._workspace.get_document_by_hash(content_hash)
+
             if existing_id:
                 print(f"Skipping {path.name}: Document already exists.")
                 document_ids.append(existing_id)
@@ -256,35 +248,53 @@ class RAG:
                     valid_embeddings.append(vec)
 
             for doc, _ in prepared:
-                doc_chunks = []
-                doc_embeddings = []
+                doc_chunks = [
+                    c for c in valid_chunks if c.document_id == doc.document_id
+                ]
+                doc_embeddings = [
+                    v
+                    for c, v in zip(valid_chunks, valid_embeddings)
+                    if c.document_id == doc.document_id
+                ]
 
-                for c, v in zip(valid_chunks, valid_embeddings):
-                    if c.document_id == doc.document_id:
-                        doc_chunks.append(c)
-                        doc_embeddings.append(v)
-
-                self._persist(doc, doc_chunks, doc_embeddings)
+                if doc_chunks:
+                    self._persist(doc, doc_chunks, doc_embeddings)
 
         return document_ids
 
     def retrieve_chunks(self, query: str, top_k: int = 5) -> List[SearchResult]:
         self._ensure_workspace()
-
         query_vector = self._embedder.embed_query(query)
 
-        raw_results = self._workspace.search(query_vector, top_k=top_k)
+        fetch_k = top_k * 3 if self.reranker else top_k
 
-        return [
+        raw_results = self._workspace.hybrid_search(
+            query_text=query,
+            query_vector=query_vector,
+            top_k=fetch_k,
+            dense_weight=0.6,
+            sparse_weight=0.4,
+        )
+
+        results = [
             SearchResult(
-                chunk_id=res["chunk_id"],
-                content=res["content"],
-                score=res["score"],
+                chunk_id=res.chunk_id,
+                content=res.content,
+                score=res.score,
                 document_id=uuid4(),
                 metadata={},
             )
             for res in raw_results
         ]
+
+        if self.reranker and results:
+            new_scores = self.reranker.rerank(query, results)  # type: ignore
+            for res, new_score in zip(results, new_scores):
+                res.score = new_score
+            results.sort(key=lambda x: x.score, reverse=True)
+            results = results[:top_k]
+
+        return results
 
     def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
         if not chunks:
@@ -318,12 +328,10 @@ class RAG:
 
     def get_chunks(self, limit: int = 10_000) -> List[Chunk]:
         self._ensure_workspace()
-
         return self._workspace.get_chunks(limit=limit)
 
     def get_documents(self, limit: int = 10_000) -> List[Document]:
         self._ensure_workspace()
-
         return self._workspace.get_documents(limit=limit)
 
     def delete_document(self, document_id: UUID) -> None:
@@ -336,7 +344,6 @@ class RAG:
         ext = Path(doc.filename).suffix.lower().lstrip(".")
 
         self._workspace.delete_document(document_id)
-
         self.object_storage.delete_file(
             workspace=self._workspace_name, document_id=document_id, extension=ext
         )
@@ -367,6 +374,6 @@ class RAG:
     def _calculate_hash(self, filepath: Path) -> str:
         sha256_hash = hashlib.sha256()
         with open(filepath, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
+            while chunk := f.read(8192):
+                sha256_hash.update(chunk)
         return sha256_hash.hexdigest()

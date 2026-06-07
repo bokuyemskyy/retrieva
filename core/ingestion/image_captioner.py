@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from PIL import Image
 
 import base64
-import requests
+import requests  # type: ignore
 
 
 @dataclass
@@ -133,12 +133,12 @@ class ImageCaptioner:
     def __init__(
         self,
         vlm: BaseVLM,
-        use_ocr: bool = True,
-        ocr_lang: str = "eng",
+        # use_ocr: bool = True,
+        # ocr_lang: str = "eng",
     ) -> None:
         self._vlm = vlm
-        self._use_ocr = use_ocr
-        self._ocr_lang = ocr_lang
+        # self._use_ocr = use_ocr
+        # self._ocr_lang = ocr_lang
 
     @property
     def vlm(self) -> BaseVLM:
@@ -146,28 +146,30 @@ class ImageCaptioner:
 
     def process(self, image_bytes: bytes, ext: str = "png") -> str:
         mime = _EXT_TO_MIME.get(ext.lower().lstrip("."), "image/png")
-        parts: list[str] = []
+        # parts: list[str] = []
 
         vlm_text = self._vlm.describe(image_bytes, mime_type=mime)
-        if vlm_text:
-            parts.append(f"Image description:\n{vlm_text}")
+        return vlm_text
+        # if vlm_text:
+        #     parts.append(vlm_text)
+        #     # parts.append(f"Image description:\n{vlm_text}")
 
-        if self._use_ocr:
-            ocr_text = self._run_ocr(image_bytes)
-            if ocr_text:
-                parts.append(f"Image ocr:\n{ocr_text}")
+        # if self._use_ocr:
+        #     ocr_text = self._run_ocr(image_bytes)
+        #     if ocr_text:
+        #         parts.append(f"Image ocr:\n{ocr_text}")
 
-        return "\n\n".join(parts)
+        # return "\n\n".join(parts)
 
-    def _run_ocr(self, image_bytes: bytes) -> str:
-        import pytesseract
+    # def _run_ocr(self, image_bytes: bytes) -> str:
+    #     import pytesseract
 
-        try:
-            img = Image.open(io.BytesIO(image_bytes))
-            img.load()
-        except Exception:
-            return ""
-        return pytesseract.image_to_string(img, lang=self._ocr_lang).strip()
+    #     try:
+    #         img = Image.open(io.BytesIO(image_bytes))
+    #         img.load()
+    #     except Exception:
+    #         return ""
+    #     return pytesseract.image_to_string(img, lang=self._ocr_lang).strip()
 
 
 class VLMFactory:

@@ -2,7 +2,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from core.embedding.embedder import EmbedderConfig
-from core.models import Chunk, Document
+from core.models import Chunk, Document, ScoredChunk
 from sqlalchemy import (
     String,
     Text,
@@ -15,6 +15,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from pgvector.sqlalchemy import Vector  # type: ignore
+from sqlalchemy import Index, Computed, func
+from sqlalchemy.dialects.postgresql import TSVECTOR
 
 
 class SystemBase(DeclarativeBase):
@@ -80,6 +82,15 @@ def _get_workspace_models(schema_name: str, vector_size: int):
             Vector(vector_size), nullable=False
         )
 
+        fts_document = mapped_column(
+            TSVECTOR,
+            Computed("to_tsvector('english'::regconfig, content)", persisted=True),
+        )
+
+        __table_args__ = (
+            Index("ix_chunk_fts", "fts_document", postgresql_using="gin"),
+        )
+
     _MODEL_CACHE[schema_name] = (WorkspaceBase, DocumentModel, ChunkModel)
     return _MODEL_CACHE[schema_name]
 
@@ -131,7 +142,7 @@ class Workspace:
                 session.add(existing)
             session.commit()
 
-    def search(self, query_vector: List[float], top_k: int = 5) -> List[dict]:
+    def search(self, query_vector: List[float], top_k: int = 5) -> List[ScoredChunk]:
         with self.SessionLocal() as session:
             distance = self.ChunkModel.embedding.cosine_distance(query_vector).label(
                 "distance"
@@ -141,15 +152,73 @@ class Workspace:
                 .order_by(distance.asc())
                 .limit(top_k)
             )
-
             return [
-                {
-                    "chunk_id": row.chunk_id,
-                    "content": row.content,
-                    "score": 1.0 - float(dist),
-                }
+                ScoredChunk(
+                    chunk_id=row.chunk_id,
+                    content=row.content,
+                    score=1.0 - float(dist),
+                )
                 for row, dist in query.all()
             ]
+
+    def text_search(self, query_text: str, top_k: int = 5) -> List[ScoredChunk]:
+        with self.SessionLocal() as session:
+            ts_query = func.websearch_to_tsquery("english", query_text)
+            rank = func.ts_rank_cd(self.ChunkModel.fts_document, ts_query).label("rank")
+            results = (
+                session.query(self.ChunkModel, rank)
+                .filter(self.ChunkModel.fts_document.op("@@")(ts_query))
+                .order_by(rank.desc())
+                .limit(top_k)
+                .all()
+            )
+
+            return [
+                ScoredChunk(
+                    chunk_id=chunk.chunk_id,
+                    content=chunk.content,
+                    score=float(rank_val),
+                )
+                for chunk, rank_val in results
+            ]
+
+    def hybrid_search(
+        self,
+        query_text: str,
+        query_vector: List[float],
+        top_k: int = 5,
+        dense_weight: float = 0.5,
+        sparse_weight: float = 0.5,
+        rrf_k: int = 60,
+    ) -> List[ScoredChunk]:
+        fetch_limit = max(top_k * 3, 20)
+
+        dense_results = self.search(query_vector, top_k=fetch_limit)
+        sparse_results = self.text_search(query_text, top_k=fetch_limit)
+
+        scores: Dict[UUID, float] = {}
+        contents: Dict[UUID, str] = {}
+
+        for rank_idx, item in enumerate(dense_results, start=1):
+            scores[item.chunk_id] = scores.get(item.chunk_id, 0.0) + (
+                dense_weight * (1.0 / (rrf_k + rank_idx))
+            )
+            contents[item.chunk_id] = item.content
+
+        for rank_idx, item in enumerate(sparse_results, start=1):
+            scores[item.chunk_id] = scores.get(item.chunk_id, 0.0) + (
+                sparse_weight * (1.0 / (rrf_k + rank_idx))
+            )
+            contents[item.chunk_id] = item.content
+
+        sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)[
+            :top_k
+        ]
+
+        return [
+            ScoredChunk(chunk_id=uid, content=contents[uid], score=score)
+            for uid, score in sorted_results
+        ]
 
     def get_document_by_hash(self, content_hash: str) -> Optional[UUID]:
         with self.SessionLocal() as session:
@@ -282,7 +351,7 @@ class WorkspaceManager:
             if reg:
                 with self.engine.begin() as conn:
                     conn.execute(
-                        text(f"DROP SCHEMA IF EXISTS {reg.schema_name} CASCADE;")
+                        text(f'DROP SCHEMA IF EXISTS "{reg.schema_name}" CASCADE;')
                     )
                 session.delete(reg)
                 session.commit()
@@ -312,7 +381,7 @@ class WorkspaceManager:
             with self.engine.begin() as conn:
                 for reg in registries:
                     conn.execute(
-                        text(f"DROP SCHEMA IF EXISTS {reg.schema_name} CASCADE;")
+                        text(f'DROP SCHEMA IF EXISTS "{reg.schema_name}" CASCADE;')
                     )
 
             session.query(WorkspaceRegistry).delete()

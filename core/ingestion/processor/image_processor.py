@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from core.ingestion.chunker import Chunker
+from core.ingestion.chunker import BaseChunker
 from core.ingestion.image_captioner import ImageCaptioner
 from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.models import Chunk, Modality, Document
@@ -12,7 +12,7 @@ from core.models import Chunk, Modality, Document
 class ImageProcessor(BaseFileProcessor):
     def __init__(
         self,
-        chunker: Chunker,
+        chunker: BaseChunker,
         image_captioner: ImageCaptioner,
     ) -> None:
         self.chunker = chunker

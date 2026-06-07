@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-from core.ingestion.chunker import Chunker
+from core.ingestion.chunker import BaseChunker
 
 from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.models import Chunk, Modality, Document
 
 
 class TextProcessor(BaseFileProcessor):
-    def __init__(self, chunker: Chunker) -> None:
+    def __init__(self, chunker: BaseChunker) -> None:
         self.chunker = chunker
 
     def ingest(self, document: Document) -> List[Chunk]:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from core.ingestion.processor.base_file_processor import BaseFileProcessor
-from core.ingestion.chunker import Chunker
+from core.ingestion.chunker import BaseChunker
 from core.models import Chunk, Document, Modality
 
 WhisperModel = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"]
@@ -13,7 +13,7 @@ WhisperModel = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"
 class AudioProcessor(BaseFileProcessor):
     def __init__(
         self,
-        chunker: Chunker,
+        chunker: BaseChunker,
         model_size: WhisperModel = "base",
         device: str = "cpu",
         compute_type: str = "int8",

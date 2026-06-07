@@ -44,10 +44,8 @@ class SearchResult:
     score: float
 
 
-@dataclass(slots=True)
-class TextSearchResult:
+@dataclass
+class ScoredChunk:
     chunk_id: UUID
-    document_id: UUID
     content: str
-    metadata: Dict[str, Any]
-    rank: float
+    score: float

@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
-import fitz
+import fitz  # type: ignore
 
-from core.ingestion.chunker import Chunker
+from core.ingestion.chunker import BaseChunker
 from core.ingestion.image_captioner import ImageCaptioner
 from core.ingestion.processor.base_file_processor import BaseFileProcessor
-from models import Chunk, Document, Modality
+from models import Chunk, Document, Modality  # type: ignore
 
 
 def _overlap_ratio(a: fitz.Rect, b: fitz.Rect) -> float:
@@ -28,7 +28,7 @@ def _is_claimed(
 class DocumentProcessor(BaseFileProcessor):
     def __init__(
         self,
-        chunker: Chunker,
+        chunker: BaseChunker,
         image_captioner: ImageCaptioner,
         min_image_area: int = 25_000,
         overlap_threshold: float = 0.5,
