@@ -80,6 +80,8 @@ def main():
     if workspace:
         rag.select_workspace(workspace)
 
+        if "uploader_key" not in st.session_state:
+            st.session_state.uploader_key = 0
         uploaded_files = st.file_uploader("Upload documents", type=[
             "pdf",
             "txt",
@@ -89,10 +91,15 @@ def main():
             "jpeg",
             "wav",
             "mp3",
-        ], accept_multiple_files=True)
-        # for file in uploaded_files:
-            # st.write(file.name)
-            # rag.add_document()
+        ], accept_multiple_files=True, key=st.session_state.uploader_key)
+
+        if uploaded_files:
+            for file in uploaded_files:
+                st.write(f"Adding {file.name}")
+                rag.add_document((file.name, file.getvalue()))
+
+            st.session_state.uploader_key += 1
+            st.rerun()
 
         query = st.chat_input("Ask about something")
         if query:
