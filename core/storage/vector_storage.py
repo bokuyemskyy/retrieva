@@ -2,7 +2,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from core.embedding.embedder import EmbedderConfig
-from core.models import Chunk, Document, ScoredChunk
+from core.models import Chunk, ChunkSearchResult, Document, Modality
 from sqlalchemy import (
     String,
     Text,
@@ -142,7 +142,9 @@ class Workspace:
                 session.add(existing)
             session.commit()
 
-    def search(self, query_vector: List[float], top_k: int = 5) -> List[ScoredChunk]:
+    def search(
+        self, query_vector: List[float], top_k: int = 5
+    ) -> List[ChunkSearchResult]:
         with self.SessionLocal() as session:
             distance = self.ChunkModel.embedding.cosine_distance(query_vector).label(
                 "distance"
@@ -153,15 +155,20 @@ class Workspace:
                 .limit(top_k)
             )
             return [
-                ScoredChunk(
-                    chunk_id=row.chunk_id,
-                    content=row.content,
+                ChunkSearchResult(
+                    chunk=Chunk(
+                        chunk_id=row.chunk_id,
+                        document_id=row.document_id,
+                        content=row.content,
+                        modality=Modality(row.modality),
+                        metadata=row.metadata_json,
+                    ),
                     score=1.0 - float(dist),
                 )
                 for row, dist in query.all()
             ]
 
-    def text_search(self, query_text: str, top_k: int = 5) -> List[ScoredChunk]:
+    def text_search(self, query_text: str, top_k: int = 5) -> List[ChunkSearchResult]:
         with self.SessionLocal() as session:
             ts_query = func.websearch_to_tsquery("english", query_text)
             rank = func.ts_rank_cd(self.ChunkModel.fts_document, ts_query).label("rank")
@@ -174,12 +181,17 @@ class Workspace:
             )
 
             return [
-                ScoredChunk(
-                    chunk_id=chunk.chunk_id,
-                    content=chunk.content,
+                ChunkSearchResult(
+                    chunk=Chunk(
+                        chunk_id=row.chunk_id,
+                        document_id=row.document_id,
+                        content=row.content,
+                        modality=Modality(row.modality),
+                        metadata=row.metadata_json,
+                    ),
                     score=float(rank_val),
                 )
-                for chunk, rank_val in results
+                for row, rank_val in results
             ]
 
     def hybrid_search(
@@ -190,33 +202,35 @@ class Workspace:
         dense_weight: float = 0.5,
         sparse_weight: float = 0.5,
         rrf_k: int = 60,
-    ) -> List[ScoredChunk]:
+    ) -> List[ChunkSearchResult]:
         fetch_limit = max(top_k * 3, 20)
 
         dense_results = self.search(query_vector, top_k=fetch_limit)
         sparse_results = self.text_search(query_text, top_k=fetch_limit)
 
         scores: Dict[UUID, float] = {}
-        contents: Dict[UUID, str] = {}
+        chunks_map: Dict[UUID, Chunk] = {}
 
         for rank_idx, item in enumerate(dense_results, start=1):
-            scores[item.chunk_id] = scores.get(item.chunk_id, 0.0) + (
+            c_id = item.chunk.chunk_id
+            scores[c_id] = scores.get(c_id, 0.0) + (
                 dense_weight * (1.0 / (rrf_k + rank_idx))
             )
-            contents[item.chunk_id] = item.content
+            chunks_map[c_id] = item.chunk
 
         for rank_idx, item in enumerate(sparse_results, start=1):
-            scores[item.chunk_id] = scores.get(item.chunk_id, 0.0) + (
+            c_id = item.chunk.chunk_id
+            scores[c_id] = scores.get(c_id, 0.0) + (
                 sparse_weight * (1.0 / (rrf_k + rank_idx))
             )
-            contents[item.chunk_id] = item.content
+            chunks_map[c_id] = item.chunk
 
         sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)[
             :top_k
         ]
 
         return [
-            ScoredChunk(chunk_id=uid, content=contents[uid], score=score)
+            ChunkSearchResult(chunk=chunks_map[uid], score=score)
             for uid, score in sorted_results
         ]
 

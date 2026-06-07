@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict
+from typing import Any
 
 from uuid import UUID
 
@@ -36,16 +36,12 @@ class Chunk:
 
 
 @dataclass(slots=True)
-class SearchResult:
-    chunk_id: UUID
-    document_id: UUID
-    content: str
-    metadata: Dict[str, Any]
+class ChunkSearchResult:
+    chunk: Chunk
     score: float
 
 
-@dataclass
-class ScoredChunk:
-    chunk_id: UUID
-    content: str
+@dataclass(slots=True)
+class DocumentSearchResult:
+    document: Document
     score: float

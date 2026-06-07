@@ -38,8 +38,9 @@ class DocumentProcessor(BaseFileProcessor):
         self._min_image_area = min_image_area
         self._overlap_threshold = overlap_threshold
         self._max_vector_elements = max_vector_elements
+        self.chunker = chunker
 
-    def ingest(self, document: Document, chunker: BaseChunker) -> List[Chunk]:
+    def ingest(self, document: Document) -> List[Chunk]:
         path = Path(document.source_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(document.source_path)
@@ -72,7 +73,7 @@ class DocumentProcessor(BaseFileProcessor):
                         if not md_table:
                             continue
                         chunks.extend(
-                            chunker.chunk(
+                            self.chunker.chunk(
                                 content=f"Table from page {page_idx}:\n\n{md_table}",
                                 document=document,
                                 modality=Modality.PDF_TABLE,
@@ -94,7 +95,7 @@ class DocumentProcessor(BaseFileProcessor):
             text = "\n\n".join(t.strip() for t in text_parts if t.strip())
             if text:
                 chunks.extend(
-                    chunker.chunk(
+                    self.chunker.chunk(
                         content=text,
                         document=document,
                         modality=Modality.PDF_TEXT,
@@ -109,7 +110,7 @@ class DocumentProcessor(BaseFileProcessor):
                     if _is_claimed(img_rect, claimed, self._overlap_threshold):
                         continue
                     new_chunks = self._process_image(
-                        doc, xref, document, base_meta, page_area, chunker
+                        doc, xref, document, base_meta, page_area, self.chunker
                     )
                     if new_chunks:
                         chunks.extend(new_chunks)
@@ -131,7 +132,7 @@ class DocumentProcessor(BaseFileProcessor):
                     )
                     if vlm_text:
                         chunks.extend(
-                            chunker.chunk(
+                            self.chunker.chunk(
                                 content=vlm_text,
                                 document=document,
                                 modality=Modality.PDF_IMAGE,
@@ -161,7 +162,7 @@ class DocumentProcessor(BaseFileProcessor):
                     )
                     if vlm_text:
                         chunks.extend(
-                            chunker.chunk(
+                            self.chunker.chunk(
                                 content=vlm_text,
                                 document=document,
                                 modality=Modality.PDF_IMAGE,
@@ -201,7 +202,7 @@ class DocumentProcessor(BaseFileProcessor):
         if not text:
             return []
 
-        return chunker.chunk(
+        return self.chunker.chunk(
             content=text,
             document=document,
             modality=Modality.PDF_IMAGE,

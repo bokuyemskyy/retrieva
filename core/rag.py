@@ -20,7 +20,7 @@ from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
-from core.models import Chunk, Document, SearchResult
+from core.models import Chunk, ChunkSearchResult, Document, DocumentSearchResult
 from core.storage.object_storage import ObjectStorage
 from core.storage.vector_storage import Workspace, WorkspaceConfig, WorkspaceManager
 from core.retrieval.llm import BaseLLM, LLMConfig, LLMFactory
@@ -276,13 +276,13 @@ class RAG:
 
         return document_ids
 
-    def retrieve_chunks(self, query: str, top_k: int = 5) -> List[SearchResult]:
+    def retrieve_chunks(self, query: str, top_k: int = 5) -> List[ChunkSearchResult]:
         self._ensure_workspace()
         query_vector = self._embedder.embed_query(query)
 
         fetch_k = top_k * 3 if self.reranker else top_k
 
-        raw_results = self._workspace.hybrid_search(
+        results = self._workspace.hybrid_search(
             query_text=query,
             query_vector=query_vector,
             top_k=fetch_k,
@@ -290,37 +290,55 @@ class RAG:
             sparse_weight=0.4,
         )
 
-        results = [
-            SearchResult(
-                chunk_id=res.chunk_id,
-                content=res.content,
-                score=res.score,
-                document_id=uuid4(),
-                metadata={},
-            )
-            for res in raw_results
-        ]
-
         if self.reranker and results:
-            new_scores = self.reranker.rerank(query, results)  # type: ignore
+            contents = [res.chunk.content for res in results]
+            new_scores = self.reranker.rerank(query, contents)
+
             for res, new_score in zip(results, new_scores):
                 res.score = new_score
+
             results.sort(key=lambda x: x.score, reverse=True)
             results = results[:top_k]
 
         return results
 
-    def generate_response(self, query: str, chunks: List[SearchResult]) -> str:
+    def search_files(self, query: str, top_k: int = 5) -> List[DocumentSearchResult]:
+        self._ensure_workspace()
+
+        chunk_results = self.retrieve_chunks(query, top_k=max(top_k * 5, 20))
+
+        doc_scores: Dict[UUID, float] = {}
+        for res in chunk_results:
+            doc_id = res.chunk.document_id
+            doc_scores[doc_id] = max(doc_scores.get(doc_id, 0.0), res.score)
+
+        sorted_doc_ids = sorted(
+            doc_scores.keys(), key=lambda d: doc_scores[d], reverse=True
+        )[:top_k]
+
+        top_files = []
+        for doc_id in sorted_doc_ids:
+            doc = self._workspace.get_document(doc_id)
+            if doc:
+                top_files.append(
+                    DocumentSearchResult(document=doc, score=doc_scores[doc_id])
+                )
+
+        return top_files
+
+    def generate_response(self, query: str, chunks: List[ChunkSearchResult]) -> str:
         if not chunks:
             return "No relevant information was found in the knowledge base."
         if not self.llm_model:
             return "No LLM model selected."
 
-        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
+        context = "\n\n".join(
+            f"[score={c.score:.3f}]\n{c.chunk.content}" for c in chunks
+        )
         prompt = self.system_prompt.format(query=query, context=context)
         return self.llm_model.generate("", prompt)
 
-    def generate_response_stream(self, query: str, chunks: List[SearchResult]):
+    def generate_response_stream(self, query: str, chunks: List[ChunkSearchResult]):
         if not chunks:
             yield "No relevant information was found in the knowledge base."
             return
@@ -328,7 +346,9 @@ class RAG:
             yield "No LLM model selected."
             return
 
-        context = "\n\n".join(f"[score={c.score:.3f}]\n{c.content}" for c in chunks)
+        context = "\n\n".join(
+            f"[score={c.score:.3f}]\n{c.chunk.content}" for c in chunks
+        )
         prompt = self.system_prompt.format(query=query, context=context)
         yield from self.llm_model.generate_stream("", prompt)
 
