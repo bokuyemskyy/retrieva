@@ -32,17 +32,12 @@ def add_new_workspace():
     base_url = st.text_input(label="Base URL", value="http://localhost:11434")
     api_key = st.text_input(label="API key")
 
-    chunk_size = st.number_input(label="Chunk size", min_value=1, value=2048)
-    chunk_overlap = st.number_input(label="Chunk overlap", min_value=1, value=256)
-
     if st.button("Create"):
         get_rag().create_workspace(
             name,
             EmbedderConfig(
                 provider,
                 model_name,
-                chunk_size,
-                chunk_overlap,
                 api_key,
                 base_url,
             ),
