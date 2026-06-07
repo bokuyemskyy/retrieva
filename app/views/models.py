@@ -15,7 +15,7 @@ def _model_form(
     )
     model_name = st.text_input("Model name", value=default_model, key=f"{prefix}_model")
     default_url = (
-        "http://localhost:11434/v1"
+        "http://localhost:11434"
         if provider == "ollama"
         else "https://api.openai.com/v1"
     )

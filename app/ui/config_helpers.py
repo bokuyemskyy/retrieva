@@ -18,13 +18,13 @@ def get_active_llm_config() -> LLMConfig | None:
     )
 
 
-def get_active_vlm_config() -> VLMConfig | None:
+def get_active_vlm_config() -> VLMConfig:
     name = st.session_state.active_vlm
     cfg = next((c for c in st.session_state.vlm_configs if c["name"] == name), None)
     if not cfg:
         cfg = st.session_state.vlm_configs[0] if st.session_state.vlm_configs else None
     if not cfg:
-        return None
+        return VLMConfig(provider="null", model_name="null")
     return VLMConfig(
         provider=cfg["provider"],
         model_name=cfg["model_name"],

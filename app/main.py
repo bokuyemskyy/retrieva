@@ -5,7 +5,7 @@ from app.views.chat import render_chat
 from app.views.documents import render_documents
 from app.views.models import render_models
 
-st.set_page_config(page_title="Retrieva", layout="wide")
+st.set_page_config(page_title="Retrieva")
 
 init_session_state()
 view = render_sidebar()
