@@ -159,27 +159,29 @@ class RAG:
         self.active_workspace = None
         self.active_embedder = None
 
-    def add_document(self, original_path: str) -> UUID:
+    def add_document(self, document: Tuple[str, Optional[bytes]]) -> UUID:
         self._ensure_workspace()
-        ids = self.add_documents([original_path])
+        ids = self.add_documents([document])
         return ids[0]
 
-    def add_documents(self, original_paths: List[str]) -> List[UUID]:
+    def add_documents(self, documents: List[Tuple[str, Optional[bytes]]]) -> List[UUID]:
         self._ensure_workspace()
 
-        if not original_paths:
+        if not documents:
             return []
 
         prepared: List[Tuple[Document, List[Chunk]]] = []
         document_ids: List[UUID] = []
         chunks_to_embed: List[Chunk] = []
 
-        for path_str in original_paths:
-            path = Path(path_str).expanduser().resolve()
-            if not path.exists():
-                raise FileNotFoundError(f"Input file does not exist: {path}")
-
-            content_hash = self._calculate_hash(path)
+        for original_path, data in documents:
+            path = Path(original_path).expanduser().resolve()
+            if data:
+                content_hash = hashlib.sha256(data).hexdigest()
+            else:
+                if not path.exists():
+                    raise FileNotFoundError(f"Input file does not exist: {path}")
+                content_hash = self._calculate_hash(path)
 
             existing_id = self._workspace.get_document_by_hash(content_hash)
             if existing_id:
@@ -194,6 +196,7 @@ class RAG:
                 workspace=self._workspace_name,
                 document_id=document_id,
                 source_path=str(path),
+                data=data,
             )
 
             document = Document(

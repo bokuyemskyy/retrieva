@@ -17,10 +17,8 @@ class ObjectStorage:
     def _workspace_dir(self, workspace: str) -> Path:
         return self.base_dir / workspace
 
-    def save_file(self, workspace: str, document_id: UUID, source_path: str) -> str:
+    def save_file(self, workspace: str, document_id: UUID, source_path: str, data: Optional[bytes]) -> str:
         source = Path(source_path).expanduser().resolve()
-        if not source.exists():
-            raise FileNotFoundError(f"Source file does not exist: {source}")
 
         workspace_dir = self._workspace_dir(workspace)
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -28,7 +26,15 @@ class ObjectStorage:
         ext = source.suffix.lower()
         destination = workspace_dir / f"{str(document_id)}{ext}"
 
-        shutil.copy2(source, destination)
+        if data:
+            with open(destination, 'wb') as fw:
+                fw.write(data)
+        else:
+            if not source.exists():
+                raise FileNotFoundError(f"Source file does not exist: {source}")
+
+            shutil.copy2(source, destination)
+
         return str(destination)
 
     def delete_file(self, workspace: str, document_id: UUID, extension: str) -> None:
