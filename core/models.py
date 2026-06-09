@@ -6,6 +6,8 @@ from typing import Any
 
 from uuid import UUID
 
+Embedding = list[float]
+
 
 class Modality(str, Enum):
     TEXT = "text"
@@ -33,6 +35,12 @@ class Chunk:
     content: str
     modality: Modality
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ChunkWithEmbedding:
+    chunk: Chunk
+    embedding: Embedding
 
 
 @dataclass(slots=True)

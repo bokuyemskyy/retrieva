@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import unicodedata
 from abc import ABC, abstractmethod
-from typing import List, Tuple
 from uuid import uuid4
 
 from core.models import Chunk, Modality, Document
@@ -28,14 +27,14 @@ class BaseChunker(ABC):
         document: Document,
         modality: Modality,
         metadata: dict | None = None,
-    ) -> List[Chunk]:
+    ) -> list[Chunk]:
         content = clean_text(content)
 
         if not content:
             return []
 
         metadata = metadata or {}
-        chunks: List[Chunk] = []
+        chunks: list[Chunk] = []
         chunk_index = 0
 
         splits = self._split(content)
@@ -65,7 +64,7 @@ class BaseChunker(ABC):
         return chunks
 
     @abstractmethod
-    def _split(self, text: str) -> List[Tuple[str, int, int]]:
+    def _split(self, text: str) -> list[tuple[str, int, int]]:
         raise NotImplementedError
 
 
@@ -78,7 +77,7 @@ class FixedSizeChunker(BaseChunker):
         self.chunk_overlap = chunk_overlap
         self._step = chunk_size - chunk_overlap
 
-    def _split(self, text: str) -> List[Tuple[str, int, int]]:
+    def _split(self, text: str) -> list[tuple[str, int, int]]:
         splits = []
         start = 0
 
@@ -102,7 +101,7 @@ class SentenceChunker(BaseChunker):
     def __init__(self, max_chunk_size: int = 800):
         self.max_chunk_size = max_chunk_size
 
-    def _split(self, text: str) -> List[Tuple[str, int, int]]:
+    def _split(self, text: str) -> list[tuple[str, int, int]]:
         sentences = []
         for match in re.finditer(r"[^.!?\n]*[.!?\n]+(?:\s|$)+|.+", text):
             sentences.append((match.group(), match.start(), match.end()))
@@ -141,12 +140,12 @@ class RecursiveChunker(BaseChunker):
         self.chunk_overlap = chunk_overlap
         self.separators = ["\n\n", "\n", ". ", " "]
 
-    def _split(self, text: str) -> List[Tuple[str, int, int]]:
+    def _split(self, text: str) -> list[tuple[str, int, int]]:
         return self._split_recursively(text, 0, self.separators)
 
     def _split_recursively(
-        self, text: str, offset: int, separators: List[str]
-    ) -> List[Tuple[str, int, int]]:
+        self, text: str, offset: int, separators: list[str]
+    ) -> list[tuple[str, int, int]]:
 
         if len(text) <= self.chunk_size:
             return [(text, offset, offset + len(text))]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
 
 import fitz  # type: ignore
 
@@ -20,7 +19,7 @@ def _overlap_ratio(a: fitz.Rect, b: fitz.Rect) -> float:
 
 
 def _is_claimed(
-    rect: fitz.Rect, claimed: List[fitz.Rect], threshold: float = 0.5
+    rect: fitz.Rect, claimed: list[fitz.Rect], threshold: float = 0.5
 ) -> bool:
     return any(_overlap_ratio(rect, c) > threshold for c in claimed)
 
@@ -40,13 +39,13 @@ class DocumentProcessor(BaseFileProcessor):
         self._max_vector_elements = max_vector_elements
         self.chunker = chunker
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document) -> list[Chunk]:
         path = Path(document.source_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(document.source_path)
 
         doc = fitz.open(str(path))
-        chunks: List[Chunk] = []
+        chunks: list[Chunk] = []
 
         print(f"adding {document}")
         for page_idx in range(len(doc)):
@@ -54,7 +53,7 @@ class DocumentProcessor(BaseFileProcessor):
             page = doc[page_idx]
             base_meta = {"page": page_idx}
             page_area = page.rect.width * page.rect.height
-            claimed: List[fitz.Rect] = []
+            claimed: list[fitz.Rect] = []
 
             drawings = page.get_drawings()
             num_drawings = len(drawings)
@@ -63,7 +62,7 @@ class DocumentProcessor(BaseFileProcessor):
             if is_vector_bomb:
                 print(f"Page {page_idx} is a vector bomb ({num_drawings} elements).")
 
-            table_rects: List[fitz.Rect] = []
+            table_rects: list[fitz.Rect] = []
 
             if not is_vector_bomb:
                 table_finder = page.find_tables()
@@ -83,7 +82,7 @@ class DocumentProcessor(BaseFileProcessor):
                         table_rects.append(fitz.Rect(table.bbox))
                         claimed.append(fitz.Rect(table.bbox))
 
-            text_parts: List[str] = []
+            text_parts: list[str] = []
             for block in page.get_text("blocks"):
                 if block[6] != 0:  # Not text
                     continue
@@ -189,7 +188,7 @@ class DocumentProcessor(BaseFileProcessor):
         base_meta: dict,
         page_area: float,
         chunker: BaseChunker,
-    ) -> List[Chunk]:
+    ) -> list[Chunk]:
         raw = doc.extract_image(xref)
         image_bytes: bytes = raw["image"]
         ext: str = raw.get("ext", "png")

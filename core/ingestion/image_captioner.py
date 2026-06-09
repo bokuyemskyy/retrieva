@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import io
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
 from PIL import Image
 
 import base64
@@ -13,8 +12,8 @@ import base64
 class VLMConfig:
     provider: str
     model_name: str
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class BaseVLM(ABC):
@@ -74,7 +73,7 @@ class OpenAIVLM(BaseVLM):
     ) -> str:
         b64_image = base64.b64encode(image_bytes).decode()
 
-        messages: list[Any] = [
+        messages = [
             {
                 "role": "user",
                 "content": [
@@ -82,13 +81,12 @@ class OpenAIVLM(BaseVLM):
                         "type": "input_text",
                         "text": (
                             "Describe this image in detail. "
-                            "Include all visible text, objects, "
-                            "layout, colors, and diagrams."
+                            "Include all visible text, objects, layout, colors, and diagrams."
                         ),
                     },
                     {
                         "type": "input_image",
-                        "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
+                        "image_url": f"data:{mime_type};base64,{b64_image}",
                     },
                 ],
             }
@@ -158,7 +156,7 @@ class ImageCaptioner:
 
 
 class VLMFactory:
-    _registry: Dict[str, type[BaseVLM]] = {}
+    _registry: dict[str, type[BaseVLM]] = {}
 
     @classmethod
     def register(cls, provider: str, vlm_class: type[BaseVLM]):

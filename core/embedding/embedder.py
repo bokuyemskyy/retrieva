@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
-from core.models import Chunk
+from core.models import Chunk, Embedding
 
 
 @dataclass
@@ -12,25 +11,25 @@ class EmbedderConfig:
     provider: str
     model_name: str
 
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class BaseEmbedder(ABC):
     provider: str
     model_name: str
-    _vector_size: Optional[int] = None
+    _vector_size: int | None = None
 
     def __init__(self, config: EmbedderConfig):
         self.provider = config.provider
         self.model_name = config.model_name
 
     @abstractmethod
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> Embedding:
         raise NotImplementedError
 
     @abstractmethod
-    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
+    def embed_chunks(self, chunks: list[Chunk]) -> list[Embedding | None]:
         raise NotImplementedError
 
     @property
@@ -48,11 +47,11 @@ class OllamaEmbedder(BaseEmbedder):
 
         self.client = ollama.Client(host=config.base_url)
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> Embedding:
         response = self.client.embed(model=self.model_name, input=[text])
         return response["embeddings"][0]
 
-    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
+    def embed_chunks(self, chunks: list[Chunk]) -> list[Embedding | None]:
         if not chunks:
             return []
 
@@ -63,7 +62,7 @@ class OllamaEmbedder(BaseEmbedder):
             return response["embeddings"]
         except Exception as e:
             print(f"Batch embedding failed for model {self.model_name}: {e}")
-            return [None] * len(chunks)
+            return [None for _ in chunks]
 
 
 class OpenAIEmbedder(BaseEmbedder):
@@ -77,11 +76,11 @@ class OpenAIEmbedder(BaseEmbedder):
             base_url=config.base_url,
         )
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> Embedding:
         res = self.client.embeddings.create(input=[text], model=self.model_name)
         return res.data[0].embedding
 
-    def embed_chunks(self, chunks: List[Chunk]) -> List[Optional[List[float]]]:
+    def embed_chunks(self, chunks: list[Chunk]) -> list[Embedding | None]:
         if not chunks:
             return []
 
@@ -92,11 +91,11 @@ class OpenAIEmbedder(BaseEmbedder):
             return [data.embedding for data in res.data]
         except Exception as e:
             print(f"Batch embedding failed for model {self.model_name}: {e}")
-            return [None] * len(chunks)
+            return [None for _ in chunks]
 
 
 class EmbedderFactory:
-    _registry: Dict[str, type[BaseEmbedder]] = {}
+    _registry: dict[str, type[BaseEmbedder]] = {}
 
     @classmethod
     def register(cls, provider: str, embedder_class: type[BaseEmbedder]):

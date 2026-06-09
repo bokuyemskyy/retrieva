@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Literal
 
 from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.chunker import BaseChunker
@@ -17,7 +17,7 @@ class AudioProcessor(BaseFileProcessor):
         model_size: WhisperModel = "base",
         device: str = "cpu",
         compute_type: str = "int8",
-        language: Optional[str] = "en",
+        language: str | None = "en",
     ) -> None:
         self._model_size = model_size
         self._device = device
@@ -26,7 +26,7 @@ class AudioProcessor(BaseFileProcessor):
         self._model = None
         self.chunker = chunker
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document) -> list[Chunk]:
         path = Path(document.source_path).resolve()
 
         if not path.is_file():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
 
 from core.ingestion.chunker import BaseChunker
 
@@ -13,7 +12,7 @@ class TextProcessor(BaseFileProcessor):
     def __init__(self, chunker: BaseChunker) -> None:
         self.chunker = chunker
 
-    def ingest(self, document: Document) -> List[Chunk]:
+    def ingest(self, document: Document) -> list[Chunk]:
         path = Path(document.source_path).resolve()
 
         if not path.is_file():

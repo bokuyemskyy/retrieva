@@ -3,7 +3,6 @@ from __future__ import annotations
 import pickle
 import shutil
 from pathlib import Path
-from typing import List, Optional
 from uuid import UUID
 
 from core.models import Chunk
@@ -17,7 +16,9 @@ class ObjectStorage:
     def _workspace_dir(self, workspace: str) -> Path:
         return self.base_dir / workspace
 
-    def save_file(self, workspace: str, document_id: UUID, source_path: str, data: Optional[bytes]) -> str:
+    def save_file(
+        self, workspace: str, document_id: UUID, source_path: str, data: bytes | None
+    ) -> str:
         source = Path(source_path).expanduser().resolve()
 
         workspace_dir = self._workspace_dir(workspace)
@@ -27,7 +28,7 @@ class ObjectStorage:
         destination = workspace_dir / f"{str(document_id)}{ext}"
 
         if data:
-            with open(destination, 'wb') as fw:
+            with open(destination, "wb") as fw:
                 fw.write(data)
         else:
             if not source.exists():
@@ -42,7 +43,7 @@ class ObjectStorage:
         exact.unlink(missing_ok=True)
 
     def save_chunks_cache(
-        self, workspace: str, content_hash: str, chunks: List[Chunk]
+        self, workspace: str, content_hash: str, chunks: list[Chunk]
     ) -> None:
         cache_dir = self._workspace_dir(workspace) / ".cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -53,7 +54,7 @@ class ObjectStorage:
 
     def load_chunks_cache(
         self, workspace: str, content_hash: str
-    ) -> Optional[List[Chunk]]:
+    ) -> list[Chunk | None]:
         cache_file = self._workspace_dir(workspace) / ".cache" / f"{content_hash}.pkl"
         if cache_file.exists():
             try:

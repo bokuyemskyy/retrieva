@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
 class LLMConfig:
     provider: str
 
-    model_name: Optional[str] = None
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    model_name: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
 
     temperature: float = 0.0
-    max_tokens: Optional[int] = 1024
+    max_tokens: int | None = 1024
     top_p: float = 1.0
 
 
@@ -53,8 +53,8 @@ class StandardLLM(BaseLLM):
             base_url=base_url,
         )
 
-    def _get_shared_args(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = {
+    def _get_shared_args(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -91,7 +91,7 @@ class StandardLLM(BaseLLM):
 
 
 class LLMFactory:
-    _registry: Dict[str, type[BaseLLM]] = {}
+    _registry: dict[str, type[BaseLLM]] = {}
 
     @classmethod
     def register(cls, provider: str, llm_class: type[BaseLLM]):

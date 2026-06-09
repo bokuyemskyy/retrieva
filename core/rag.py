@@ -2,31 +2,34 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 from uuid import UUID, uuid4
 
 from slugify import slugify
 
-from core.embedding.embedder import BaseEmbedder, EmbedderConfig, EmbedderFactory
+from core.embedding.embedder import EmbedderConfig, EmbedderFactory
 from core.ingestion.chunker import BaseChunker, RecursiveChunker
 from core.ingestion.image_captioner import (
-    BaseVLM,
     ImageCaptioner,
     VLMConfig,
     VLMFactory,
 )
 from core.ingestion.processor.audio_processor import AudioProcessor
-from core.ingestion.processor.base_file_processor import BaseFileProcessor
 from core.ingestion.processor.document_processor import DocumentProcessor
 from core.ingestion.processor.image_processor import ImageProcessor
 from core.ingestion.processor.text_processor import TextProcessor
-from core.models import Chunk, ChunkSearchResult, Document, DocumentSearchResult
+from core.models import (
+    Chunk,
+    ChunkSearchResult,
+    Document,
+    DocumentSearchResult,
+    Embedding,
+)
 from core.storage.object_storage import ObjectStorage
 from core.storage.vector_storage import Workspace, WorkspaceConfig, WorkspaceManager
-from core.retrieval.llm import BaseLLM, LLMConfig, LLMFactory
-from core.retrieval.reranker import BaseReranker, CrossEncoderReranker
+from core.retrieval.llm import LLMConfig, LLMFactory
+from core.retrieval.reranker import BaseReranker
 
-DocumentInput = Union[str, Path, Tuple[str, bytes]]
+DocumentInput = str | Path | tuple[str, bytes]
 
 
 class RAG:
@@ -44,7 +47,7 @@ class RAG:
             chunk_overlap=120,
         )
 
-    def _get_processors(self, vlm_config: Optional[VLMConfig] = None) -> dict:
+    def _get_processors(self, vlm_config: VLMConfig | None = None) -> dict:
         vlm = VLMFactory.create(
             vlm_config or VLMConfig(provider="null", model_name="null"), validate=False
         )
@@ -77,7 +80,7 @@ class RAG:
         self.object_storage._workspace_dir(slug).mkdir(parents=True, exist_ok=True)
         return ws
 
-    def get_workspaces(self) -> List[WorkspaceConfig]:
+    def get_workspaces(self) -> list[WorkspaceConfig]:
         return self.workspace_manager.get_workspaces()
 
     def delete_workspace(self, name: str) -> None:
@@ -101,7 +104,7 @@ class RAG:
         self,
         workspace_name: str,
         document: DocumentInput,
-        vlm_config: Optional[VLMConfig] = None,
+        vlm_config: VLMConfig | None = None,
     ) -> UUID:
         ids = self.add_documents(workspace_name, [document], vlm_config)
         return ids[0]
@@ -109,9 +112,9 @@ class RAG:
     def add_documents(
         self,
         workspace_name: str,
-        documents: List[DocumentInput],
-        vlm_config: Optional[VLMConfig] = None,
-    ) -> List[UUID]:
+        documents: list[DocumentInput],
+        vlm_config: VLMConfig | None = None,
+    ) -> list[UUID]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
         embedder = EmbedderFactory.create(config=workspace.config.embedder_config)
@@ -120,9 +123,9 @@ class RAG:
         if not documents:
             return []
 
-        prepared: List[Tuple[Document, List[Chunk]]] = []
-        document_ids: List[UUID] = []
-        chunks_to_embed: List[Chunk] = []
+        prepared: list[tuple[Document, list[Chunk]]] = []
+        document_ids: list[UUID] = []
+        chunks_to_embed: list[Chunk] = []
 
         for doc_input in documents:
             if isinstance(doc_input, tuple):
@@ -216,8 +219,8 @@ class RAG:
         workspace_name: str,
         query: str,
         top_k: int = 5,
-        reranker: Optional[BaseReranker] = None,
-    ) -> List[ChunkSearchResult]:
+        reranker: BaseReranker | None = None,
+    ) -> list[ChunkSearchResult]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
         embedder = EmbedderFactory.create(config=workspace.config.embedder_config)
@@ -245,7 +248,7 @@ class RAG:
 
     def search_files(
         self, workspace_name: str, query: str, top_k: int = 5
-    ) -> List[DocumentSearchResult]:
+    ) -> list[DocumentSearchResult]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
 
@@ -253,7 +256,7 @@ class RAG:
             workspace_name, query, top_k=max(top_k * 5, 20)
         )
 
-        doc_scores: Dict[UUID, float] = {}
+        doc_scores: dict[UUID, float] = {}
         for res in chunk_results:
             doc_id = res.chunk.document_id
             doc_scores[doc_id] = max(doc_scores.get(doc_id, 0.0), res.score)
@@ -274,10 +277,10 @@ class RAG:
 
     def generate_response(
         self,
-        chunks: List[ChunkSearchResult],
+        chunks: list[ChunkSearchResult],
         query: str,
         llm_config: LLMConfig,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ) -> str:
         if not chunks:
             return "No relevant information was found in the knowledge base."
@@ -300,10 +303,10 @@ class RAG:
 
     def generate_response_stream(
         self,
-        chunks: List[ChunkSearchResult],
+        chunks: list[ChunkSearchResult],
         query: str,
         llm_config: LLMConfig,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ):
         if not chunks:
             yield "No relevant information was found in the knowledge base."
@@ -331,8 +334,8 @@ class RAG:
         query: str,
         llm_config: LLMConfig,
         top_k: int = 5,
-        reranker: Optional[BaseReranker] = None,
-        system_prompt: Optional[str] = None,
+        reranker: BaseReranker | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         chunks = self.retrieve_chunks(
             workspace_name, query, top_k=top_k, reranker=reranker
@@ -345,8 +348,8 @@ class RAG:
         query: str,
         llm_config: LLMConfig,
         top_k: int = 5,
-        reranker: Optional[BaseReranker] = None,
-        system_prompt: Optional[str] = None,
+        reranker: BaseReranker | None = None,
+        system_prompt: str | None = None,
     ):
         chunks = self.retrieve_chunks(
             workspace_name, query, top_k=top_k, reranker=reranker
@@ -355,12 +358,17 @@ class RAG:
             chunks, query, llm_config, system_prompt
         )
 
-    def get_chunks(self, workspace_name: str, limit: int = 10_000) -> List[Chunk]:
+    def get_chunks(self, workspace_name: str, limit: int = 10_000) -> list[Chunk]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
         return workspace.get_chunks(limit=limit)
 
-    def get_documents(self, workspace_name: str, limit: int = 10_000) -> List[Document]:
+    def get_chunks_with_embeddings(self, workspace_name: str, limit: int = 10_000):
+        slug = slugify(workspace_name)
+        workspace = self.workspace_manager.workspace(slug)
+        return workspace.get_chunks_with_embeddings(limit)
+
+    def get_documents(self, workspace_name: str, limit: int = 10_000) -> list[Document]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
         return workspace.get_documents(limit=limit)
@@ -385,8 +393,8 @@ class RAG:
         workspace: Workspace,
         workspace_slug: str,
         document: Document,
-        chunks: List[Chunk],
-        embeddings: List[List[float]],
+        chunks: list[Chunk],
+        embeddings: list[Embedding],
     ) -> None:
         try:
             workspace.upsert_document(document)

@@ -1,8 +1,15 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import UUID
 from core.embedding.embedder import EmbedderConfig
-from core.models import Chunk, ChunkSearchResult, Document, Modality
+from core.models import (
+    Chunk,
+    ChunkSearchResult,
+    ChunkWithEmbedding,
+    Document,
+    Embedding,
+    Modality,
+)
 from sqlalchemy import (
     String,
     Text,
@@ -42,7 +49,7 @@ class WorkspaceConfig:
     embedder_config: EmbedderConfig
 
 
-_MODEL_CACHE: Dict[str, Any] = {}
+_MODEL_CACHE: dict[str, Any] = {}
 
 
 def _get_workspace_models(schema_name: str, vector_size: int):
@@ -78,7 +85,7 @@ def _get_workspace_models(schema_name: str, vector_size: int):
         metadata_json: Mapped[dict[str, Any]] = mapped_column(
             JSONB, server_default=text("'{}'::jsonb")
         )
-        embedding: Mapped[List[float]] = mapped_column(
+        embedding: Mapped[Embedding] = mapped_column(
             Vector(vector_size), nullable=False
         )
 
@@ -117,7 +124,7 @@ class Workspace:
             session.add(existing)
             session.commit()
 
-    def upsert_chunks(self, chunks: List[Chunk], embeddings: List[List[float]]) -> None:
+    def upsert_chunks(self, chunks: list[Chunk], embeddings: list[Embedding]) -> None:
         if len(chunks) != len(embeddings):
             raise ValueError("The number of chunks and embeddings must be identical.")
 
@@ -143,8 +150,8 @@ class Workspace:
             session.commit()
 
     def search(
-        self, query_vector: List[float], top_k: int = 5
-    ) -> List[ChunkSearchResult]:
+        self, query_vector: Embedding, top_k: int = 5
+    ) -> list[ChunkSearchResult]:
         with self.SessionLocal() as session:
             distance = self.ChunkModel.embedding.cosine_distance(query_vector).label(
                 "distance"
@@ -168,7 +175,7 @@ class Workspace:
                 for row, dist in query.all()
             ]
 
-    def text_search(self, query_text: str, top_k: int = 5) -> List[ChunkSearchResult]:
+    def text_search(self, query_text: str, top_k: int = 5) -> list[ChunkSearchResult]:
         with self.SessionLocal() as session:
             ts_query = func.websearch_to_tsquery("english", query_text)
             rank = func.ts_rank_cd(self.ChunkModel.fts_document, ts_query).label("rank")
@@ -197,19 +204,19 @@ class Workspace:
     def hybrid_search(
         self,
         query_text: str,
-        query_vector: List[float],
+        query_vector: Embedding,
         top_k: int = 5,
         dense_weight: float = 0.5,
         sparse_weight: float = 0.5,
         rrf_k: int = 60,
-    ) -> List[ChunkSearchResult]:
+    ) -> list[ChunkSearchResult]:
         fetch_limit = max(top_k * 3, 20)
 
         dense_results = self.search(query_vector, top_k=fetch_limit)
         sparse_results = self.text_search(query_text, top_k=fetch_limit)
 
-        scores: Dict[UUID, float] = {}
-        chunks_map: Dict[UUID, Chunk] = {}
+        scores: dict[UUID, float] = {}
+        chunks_map: dict[UUID, Chunk] = {}
 
         for rank_idx, item in enumerate(dense_results, start=1):
             c_id = item.chunk.chunk_id
@@ -234,7 +241,7 @@ class Workspace:
             for uid, score in sorted_results
         ]
 
-    def get_document_by_hash(self, content_hash: str) -> Optional[UUID]:
+    def get_document_by_hash(self, content_hash: str) -> UUID | None:
         with self.SessionLocal() as session:
             doc = (
                 session.query(self.DocumentModel)
@@ -244,7 +251,7 @@ class Workspace:
 
             return doc.document_id if doc else None
 
-    def get_documents(self, limit: int = 1000) -> List[Document]:
+    def get_documents(self, limit: int = 1000) -> list[Document]:
         with self.SessionLocal() as session:
             rows = (
                 session.query(self.DocumentModel)
@@ -264,7 +271,7 @@ class Workspace:
                 for row in rows
             ]
 
-    def get_document(self, document_id: UUID) -> Optional[Document]:
+    def get_document(self, document_id: UUID) -> Document | None:
         with self.SessionLocal() as session:
             row = session.get(self.DocumentModel, document_id)
             if row:
@@ -284,7 +291,7 @@ class Workspace:
                 session.delete(row)
                 session.commit()
 
-    def get_chunks(self, limit: int = 1000) -> List[Chunk]:
+    def get_chunks(self, limit: int = 1000) -> list[Chunk]:
         with self.SessionLocal() as session:
             rows = (
                 session.query(self.ChunkModel)
@@ -299,6 +306,28 @@ class Workspace:
                     content=row.content,
                     modality=row.modality,
                     metadata=row.metadata_json,
+                )
+                for row in rows
+            ]
+
+    def get_chunks_with_embeddings(self, limit: int = 1000) -> list[ChunkWithEmbedding]:
+        with self.SessionLocal() as session:
+            rows = (
+                session.query(self.ChunkModel)
+                .order_by(self.ChunkModel.chunk_id)
+                .limit(limit)
+                .all()
+            )
+            return [
+                ChunkWithEmbedding(
+                    chunk=Chunk(
+                        chunk_id=row.chunk_id,
+                        document_id=row.document_id,
+                        content=row.content,
+                        modality=row.modality,
+                        metadata=row.metadata_json,
+                    ),
+                    embedding=row.embedding,
                 )
                 for row in rows
             ]
@@ -370,7 +399,7 @@ class WorkspaceManager:
                 session.delete(reg)
                 session.commit()
 
-    def get_workspaces(self) -> List[WorkspaceConfig]:
+    def get_workspaces(self) -> list[WorkspaceConfig]:
         with self.SessionLocal() as session:
             registries = session.query(WorkspaceRegistry).all()
 
