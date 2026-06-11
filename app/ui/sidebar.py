@@ -1,7 +1,12 @@
 import streamlit as st
 from core.embedding.embedder import EmbedderConfig
 
-NAV_ITEMS = [("chat", "Chat"), ("documents", "Documents"), ("models", "Models")]
+NAV_ITEMS = [
+    ("chat", "Chat"),
+    ("documents", "Documents"),
+    ("models", "Models"),
+    ("projection", "Projection"),
+]
 
 
 @st.dialog("New workspace")

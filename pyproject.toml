@@ -21,8 +21,11 @@ dependencies = [
     "openai>=2.36.0",
     "pgvector>=0.4.2",
     "pillow>=12.2.0",
+    "plotly>=6.8.0",
     "psycopg2-binary>=2.9.12",
     "pymupdf>=1.27.2.3",
+    "pymupdf-layout>=1.27.2.3",
+    "pymupdf4llm>=1.27.2.3",
     "pytesseract>=0.3.13",
     "python-dotenv>=1.2.2",
     "python-slugify>=8.0.4",
@@ -34,6 +37,7 @@ dependencies = [
     "streamlit>=1.57.0",
     "tqdm>=4.67.3",
     "transformers==4.56.1",
+    "umap-learn>=0.5.12",
     "yt-dlp>=2026.3.17",
 ]
 

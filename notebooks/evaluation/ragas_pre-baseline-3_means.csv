@@ -1,0 +1,2 @@
+run_name,context_precision,context_recall,faithfulness,answer_relevancy
+pre-baseline-3,0.9103,0.74,0.882,0.8409

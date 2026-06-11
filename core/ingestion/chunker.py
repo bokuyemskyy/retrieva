@@ -14,9 +14,7 @@ def clean_text(text: str) -> str:
     )
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
     text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n ", "\n", text)
     return text.strip()
 
 
@@ -72,10 +70,8 @@ class FixedSizeChunker(BaseChunker):
     def __init__(self, chunk_size: int = 800, chunk_overlap: int = 150) -> None:
         if chunk_overlap >= chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
-
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self._step = chunk_size - chunk_overlap
 
     def _split(self, text: str) -> list[tuple[str, int, int]]:
         splits = []
@@ -83,23 +79,29 @@ class FixedSizeChunker(BaseChunker):
 
         while start < len(text):
             end = min(start + self.chunk_size, len(text))
-            raw_window = text[start:end]
 
             if end < len(text):
-                last_space = raw_window.rfind(" ")
-                if last_space > 0:
-                    end = start + last_space
-                    raw_window = text[start:end]
+                last_space = text.rfind(" ", start, end)
+                if last_space > start:
+                    end = last_space
 
-            splits.append((raw_window, start, end))
-            start += self._step
+            splits.append((text[start:end], start, end))
+
+            if end == len(text):
+                break
+
+            start = end - self.chunk_overlap
+
+            if start <= splits[-1][1]:
+                start = end
 
         return splits
 
 
 class SentenceChunker(BaseChunker):
-    def __init__(self, max_chunk_size: int = 800):
+    def __init__(self, max_chunk_size: int = 800, chunk_overlap: int = 150):
         self.max_chunk_size = max_chunk_size
+        self.chunk_overlap = chunk_overlap
 
     def _split(self, text: str) -> list[tuple[str, int, int]]:
         sentences = []
@@ -107,29 +109,34 @@ class SentenceChunker(BaseChunker):
             sentences.append((match.group(), match.start(), match.end()))
 
         splits = []
-        current_text = ""
-        current_start = 0
+        i = 0
 
-        for sentence_text, s_start, s_end in sentences:
-            if not current_text:
-                current_start = s_start
+        while i < len(sentences):
+            current_text = ""
+            current_start = sentences[i][1]
 
-            if (
-                len(current_text) + len(sentence_text) > self.max_chunk_size
-                and current_text
-            ):
-                splits.append(
-                    (current_text, current_start, current_start + len(current_text))
-                )
-                current_text = sentence_text
-                current_start = s_start
-            else:
+            while i < len(sentences):
+                sentence_text, s_start, s_end = sentences[i]
+                if current_text and (
+                    len(current_text) + len(sentence_text) > self.max_chunk_size
+                ):
+                    break
                 current_text += sentence_text
+                i += 1
 
-        if current_text:
             splits.append(
                 (current_text, current_start, current_start + len(current_text))
             )
+
+            if i < len(sentences):
+                overlap_size = 0
+
+                while (
+                    i > 0
+                    and overlap_size + len(sentences[i - 1][0]) <= self.chunk_overlap
+                ):
+                    i -= 1
+                    overlap_size += len(sentences[i][0])
 
         return splits
 
@@ -138,7 +145,7 @@ class RecursiveChunker(BaseChunker):
     def __init__(self, chunk_size: int = 800, chunk_overlap: int = 150):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.separators = ["\n\n", "\n", ". ", " "]
+        self.separators = ["\n# ", "\n## ", "\n### ", "\n\n", "\n", ". ", " "]
 
     def _split(self, text: str) -> list[tuple[str, int, int]]:
         return self._split_recursively(text, 0, self.separators)
@@ -156,15 +163,26 @@ class RecursiveChunker(BaseChunker):
                 active_sep = sep
                 break
 
-        if not active_sep:
-            splits = []
+        def _hard_split(
+            fallback_text: str, fallback_offset: int
+        ) -> list[tuple[str, int, int]]:
+            fallback_splits = []
             start = 0
             step = self.chunk_size - self.chunk_overlap
-            while start < len(text):
-                end = min(start + self.chunk_size, len(text))
-                splits.append((text[start:end], offset + start, offset + end))
+            while start < len(fallback_text):
+                end = min(start + self.chunk_size, len(fallback_text))
+                fallback_splits.append(
+                    (
+                        fallback_text[start:end],
+                        fallback_offset + start,
+                        fallback_offset + end,
+                    )
+                )
                 start += step
-            return splits
+            return fallback_splits
+
+        if not active_sep:
+            return _hard_split(text, offset)
 
         parts = text.split(active_sep)
         splits = []
@@ -210,10 +228,13 @@ class RecursiveChunker(BaseChunker):
         )
 
         for chunk_text, start_idx, end_idx in splits:
-            if len(chunk_text) > self.chunk_size and next_separators:
-                final_splits.extend(
-                    self._split_recursively(chunk_text, start_idx, next_separators)
-                )
+            if len(chunk_text) > self.chunk_size:
+                if next_separators:
+                    final_splits.extend(
+                        self._split_recursively(chunk_text, start_idx, next_separators)
+                    )
+                else:
+                    final_splits.extend(_hard_split(chunk_text, start_idx))
             else:
                 final_splits.append((chunk_text, start_idx, end_idx))
 

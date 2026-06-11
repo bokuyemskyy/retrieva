@@ -20,6 +20,7 @@ from core.ingestion.processor.text_processor import TextProcessor
 from core.models import (
     Chunk,
     ChunkSearchResult,
+    ChunkWithEmbedding,
     Document,
     DocumentSearchResult,
     Embedding,
@@ -88,17 +89,9 @@ class RAG:
         self.workspace_manager.delete_workspace(slug)
         self.object_storage.delete_workspace(slug)
 
-        if self.active_workspace_name == slug:
-            self.active_workspace_name = None
-            self.active_workspace = None
-            self.active_embedder = None
-
     def delete_all_workspaces(self) -> None:
         self.workspace_manager.delete_all_workspaces()
         self.object_storage.delete_all_workspaces()
-        self.active_workspace_name = None
-        self.active_workspace = None
-        self.active_embedder = None
 
     def add_document(
         self,
@@ -288,16 +281,24 @@ class RAG:
         llm_model = LLMFactory.create(llm_config, validate=False)
 
         default_prompt = (
-            "Answer the question using only the provided context. "
-            "If the context does not contain enough information, say so.\n\n"
-            "Context:\n{context}\n\n"
-            "Question: {query}"
+            "You are an expert, truthful AI assistant. Your task is to answer the user's "
+            "question explicitly and solely based on the provided context.\n\n"
+            "<context>\n{context}\n</context>\n\n"
+            "Instructions:\n"
+            "1. STRICT ADHERENCE: Answer strictly based on the <context> above. Under no circumstances should you use outside knowledge or hallucinate information.\n"
+            "2. MISSING INFO: If the exact answer cannot be deduced from the context, respond exactly with: 'I cannot answer this based on the provided context.' Do not attempt to guess.\n"
+            "3. DIRECTNESS: Be direct, concise, and highly relevant to the question. Do not start your answer with filler like 'Based on the provided context...'.\n\n"
+            "Question: {query}\n"
+            "Answer:"
         )
         prompt_template = system_prompt or default_prompt
 
-        context = "\n\n".join(
-            f"[score={c.score:.3f}]\n{c.chunk.content}" for c in chunks
-        )
+        context_blocks = [
+            f"--- Document Snippet (Score: {c.score:.3f}) ---\n{c.chunk.content}"
+            for c in chunks
+        ]
+        context = "\n\n".join(context_blocks)
+
         prompt = prompt_template.format(query=query, context=context)
         return llm_model.generate("", prompt)
 
@@ -315,16 +316,24 @@ class RAG:
         llm_model = LLMFactory.create(llm_config, validate=False)
 
         default_prompt = (
-            "Answer the question using only the provided context. "
-            "If the context does not contain enough information, say so.\n\n"
-            "Context:\n{context}\n\n"
-            "Question: {query}"
+            "You are an expert, truthful AI assistant. Your task is to answer the user's "
+            "question explicitly and solely based on the provided context.\n\n"
+            "<context>\n{context}\n</context>\n\n"
+            "Instructions:\n"
+            "1. STRICT ADHERENCE: Answer strictly based on the <context> above. Under no circumstances should you use outside knowledge or hallucinate information.\n"
+            "2. MISSING INFO: If the exact answer cannot be deduced from the context, respond exactly with: 'I cannot answer this based on the provided context.' Do not attempt to guess.\n"
+            "3. DIRECTNESS: Be direct, concise, and highly relevant to the question. Do not start your answer with filler like 'Based on the provided context...'.\n\n"
+            "Question: {query}\n"
+            "Answer:"
         )
         prompt_template = system_prompt or default_prompt
 
-        context = "\n\n".join(
-            f"[score={c.score:.3f}]\n{c.chunk.content}" for c in chunks
-        )
+        context_blocks = [
+            f"--- Document Snippet (Score: {c.score:.3f}) ---\n{c.chunk.content}"
+            for c in chunks
+        ]
+        context = "\n\n".join(context_blocks)
+
         prompt = prompt_template.format(query=query, context=context)
         yield from llm_model.generate_stream("", prompt)
 
@@ -363,7 +372,9 @@ class RAG:
         workspace = self.workspace_manager.workspace(slug)
         return workspace.get_chunks(limit=limit)
 
-    def get_chunks_with_embeddings(self, workspace_name: str, limit: int = 10_000):
+    def get_chunks_with_embeddings(
+        self, workspace_name: str, limit: int = 10_000
+    ) -> list[ChunkWithEmbedding]:
         slug = slugify(workspace_name)
         workspace = self.workspace_manager.workspace(slug)
         return workspace.get_chunks_with_embeddings(limit)
