@@ -8,13 +8,7 @@ from PIL import Image
 import base64
 
 
-DEFAULT_PROMPT = (
-    "Analyze this scientific figure. For each observation, state what it means, not just what it looks like. "
-    "Cover in flowing prose: the core finding; all relationships between variables (trends, peaks, saturation, crossovers); "
-    "quantitative anchors such as key values, ratios, and thresholds; physical or mechanistic implications — not just 'A is higher than B' but why that matters. "
-    "Transcribe all axis labels, units, legend entries, and annotations verbatim. "
-    "Be dense and factual. Every sentence must state a distinct scientific fact."
-)
+DEFAULT_PROMPT = "Describe the image in detail. Transcribe all visible text exactly. Densely describe objects, layout, tables, charts, and diagrams. Be thorough, and precise."
 
 
 _BBOX_PATTERN = re.compile(
