@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from core.models import Chunk, Embedding
+import time
 
 
 @dataclass
@@ -42,14 +43,24 @@ class BaseEmbedder(ABC):
 class OllamaEmbedder(BaseEmbedder):
     def __init__(self, config: EmbedderConfig):
         super().__init__(config)
-
         import ollama
 
         self.client = ollama.Client(host=config.base_url)
 
     def embed_query(self, text: str) -> Embedding:
-        response = self.client.embed(model=self.model_name, input=[text])
-        return response["embeddings"][0]
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.embed(model=self.model_name, input=[text])
+                return response["embeddings"][0]
+            except Exception as e:
+                print(
+                    f"Query embedding failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                time.sleep(1)
+
+        print(f"Query embedding failed for text: {text[:50]}...")
+        return [0.0] * self.vector_size
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[Embedding | None]:
         if not chunks:
@@ -60,15 +71,28 @@ class OllamaEmbedder(BaseEmbedder):
         try:
             response = self.client.embed(input=texts, model=self.model_name)
             return response["embeddings"]
-        except Exception as e:
-            print(f"Batch embedding failed for model {self.model_name}: {e}")
-            return [None for _ in chunks]
+        except Exception as batch_error:
+            print(
+                f"Batch embedding failed for model {self.model_name} ({batch_error})."
+            )
+            print("Falling back to individual chunk processing.")
+
+        safe_embeddings: list[Embedding | None] = []
+        for text in texts:
+            try:
+                response = self.client.embed(input=[text], model=self.model_name)
+                safe_embeddings.append(response["embeddings"][0])
+            except Exception as e:
+                print(f"\nCould not embed text: {text[:100]!r}")
+                print(f"Reason: {e}\n")
+                safe_embeddings.append(None)
+
+        return safe_embeddings
 
 
 class OpenAIEmbedder(BaseEmbedder):
     def __init__(self, config: EmbedderConfig):
         super().__init__(config)
-
         from openai import OpenAI
 
         self.client = OpenAI(
@@ -77,21 +101,62 @@ class OpenAIEmbedder(BaseEmbedder):
         )
 
     def embed_query(self, text: str) -> Embedding:
-        res = self.client.embeddings.create(input=[text], model=self.model_name)
-        return res.data[0].embedding
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                res = self.client.embeddings.create(input=[text], model=self.model_name)
+                return res.data[0].embedding
+            except Exception as e:
+                print(
+                    f"Query embedding failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                time.sleep(1)
+
+        print(f"Query embedding permanently failed for text: {text[:50]}...")
+        return [0.0] * self.vector_size
 
     def embed_chunks(self, chunks: list[Chunk]) -> list[Embedding | None]:
         if not chunks:
             return []
 
         texts = [c.content for c in chunks]
+        all_embeddings: list[Embedding | None] = []
 
-        try:
-            res = self.client.embeddings.create(input=texts, model=self.model_name)
-            return [data.embedding for data in res.data]
-        except Exception as e:
-            print(f"Batch embedding failed for model {self.model_name}: {e}")
-            return [None for _ in chunks]
+        BATCH_SIZE = 50
+
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i : i + BATCH_SIZE]
+            success = False
+
+            for attempt in range(3):
+                try:
+                    res = self.client.embeddings.create(
+                        input=batch, model=self.model_name
+                    )
+                    all_embeddings.extend([data.embedding for data in res.data])
+                    success = True
+                    break
+                except Exception as e:
+                    print(
+                        f"Batch embedding failed (batch {i // BATCH_SIZE}, attempt {attempt + 1}): {e}"
+                    )
+                    time.sleep(1)
+
+            if not success:
+                print(
+                    f"Batch {i // BATCH_SIZE} failed. Falling back to individual processing for this batch..."
+                )
+                for text in batch:
+                    try:
+                        res = self.client.embeddings.create(
+                            input=[text], model=self.model_name
+                        )
+                        all_embeddings.append(res.data[0].embedding)
+                    except Exception as e:
+                        print(f"Could not embed individual chunk: {e}")
+                        all_embeddings.append(None)
+
+        return all_embeddings
 
 
 class EmbedderFactory:

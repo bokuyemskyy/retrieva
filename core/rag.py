@@ -221,12 +221,17 @@ class RAG:
         query_vector = embedder.embed_query(query)
         fetch_k = top_k * 3 if reranker else top_k
 
-        results = workspace.hybrid_search(
-            query_text=query,
+        # results = workspace.hybrid_search(
+        #     query_text=query,
+        #     query_vector=query_vector,
+        #     top_k=fetch_k,
+        #     dense_weight=0.6,
+        #     sparse_weight=0.4,
+        # )
+
+        results = workspace.search(
             query_vector=query_vector,
             top_k=fetch_k,
-            dense_weight=0.6,
-            sparse_weight=0.4,
         )
 
         if reranker and results:
@@ -249,22 +254,20 @@ class RAG:
             workspace_name, query, top_k=max(top_k * 5, 20)
         )
 
-        doc_scores: dict[UUID, float] = {}
+        seen_docs = set()
+        top_files = []
+
         for res in chunk_results:
             doc_id = res.chunk.document_id
-            doc_scores[doc_id] = max(doc_scores.get(doc_id, 0.0), res.score)
-
-        sorted_doc_ids = sorted(
-            doc_scores.keys(), key=lambda d: doc_scores[d], reverse=True
-        )[:top_k]
-
-        top_files = []
-        for doc_id in sorted_doc_ids:
-            doc = workspace.get_document(doc_id)
-            if doc:
-                top_files.append(
-                    DocumentSearchResult(document=doc, score=doc_scores[doc_id])
-                )
+            if doc_id not in seen_docs:
+                seen_docs.add(doc_id)
+                doc = workspace.get_document(doc_id)
+                if doc:
+                    top_files.append(
+                        DocumentSearchResult(document=doc, score=res.score)
+                    )
+                if len(top_files) >= top_k:
+                    break
 
         return top_files
 

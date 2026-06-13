@@ -98,13 +98,11 @@ def _delete_all_models_dialog(config_key: str, active_key: str):
 
 def _render_model_selection(config_key: str, active_key: str, label: str) -> bool:
     configs = st.session_state.get(config_key, [])
-    if not configs:
-        st.caption(f"No {label} configured.")
-        return False
+    names = ["None"] + [c["name"] for c in configs]
 
-    names = [c["name"] for c in configs]
     active_val = st.session_state.get(active_key)
-    idx = names.index(active_val) if active_val in names else 0
+    display_val = active_val if active_val in names else "None"
+    idx = names.index(display_val)
 
     selected = st.selectbox(
         f"Select {label}",
@@ -114,12 +112,13 @@ def _render_model_selection(config_key: str, active_key: str, label: str) -> boo
         key=f"sel_{label}",
     )
 
-    if selected != active_val:
-        st.session_state[active_key] = selected
+    new_val = None if selected == "None" else selected
+    if new_val != active_val:
+        st.session_state[active_key] = new_val
         save_configs()
         st.rerun()
 
-    return True
+    return len(configs) > 0
 
 
 def render_models():
@@ -176,3 +175,13 @@ def render_models():
             key="del_all_btn_vlm",
         ):
             _delete_all_models_dialog("vlm_configs", "active_vlm")
+
+    st.divider()
+    st.subheader("Retrieval Settings")
+
+    use_reranker = st.session_state.get("use_reranker", False)
+    new_reranker_state = st.toggle("Enable CrossEncoder Reranking", value=use_reranker)
+
+    if new_reranker_state != use_reranker:
+        st.session_state.use_reranker = new_reranker_state
+        st.rerun()

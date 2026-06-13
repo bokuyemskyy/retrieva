@@ -6,8 +6,30 @@ from sklearn.preprocessing import normalize
 import umap
 
 
+@st.dialog("Chunk Details")
+def _chunk_inspector_dialog(chunk_data: dict):
+    """Displays chunk details in a clean popup modal."""
+    st.markdown(f"**Source File:** `{chunk_data.get('filename', 'Unknown')}`")
+    st.markdown(f"**Modality:** `{chunk_data.get('modality', 'Unknown')}`")
+    st.markdown(f"**Chunk ID:** `{chunk_data['chunk_id']}`")
+
+    metadata = chunk_data.get("metadata", {})
+    if metadata:
+        with st.expander("View Metadata"):
+            st.json(metadata)
+
+    st.markdown("**Content:**")
+    st.text_area(
+        "Content",
+        value=chunk_data["content"],
+        height=300,
+        # Removed disabled=True to get rid of the gray background
+        label_visibility="collapsed",
+    )
+
+
 def render_projection():
-    st.title("Chunk Projection (2D)")
+    st.title("Chunk Projection")
     st.divider()
 
     ws = st.session_state.active_ws
@@ -15,13 +37,16 @@ def render_projection():
         st.info("Select or create a workspace in the sidebar.")
         return
 
-    with st.spinner("Fetching chunks..."):
+    with st.spinner("Fetching data..."):
         try:
             chunks = st.session_state.rag.get_chunks_with_embeddings(
                 workspace_name=ws, limit=10_000
             )
+            # Fetch documents to map document_id to filename
+            docs = st.session_state.rag.get_documents(workspace_name=ws)
+            doc_map = {str(d.document_id): d.filename for d in docs}
         except Exception as e:
-            st.error(f"Error loading chunks: {e}")
+            st.error(f"Error loading data: {e}")
             return
 
     if not chunks:
@@ -41,22 +66,27 @@ def render_projection():
             metric="cosine",
             random_state=42,
         )
-
         projection = reducer.fit_transform(embeddings)
 
+    # Build the dataframe with the new requested fields
     df = pd.DataFrame(
         {
             "x": projection[:, 0],
             "y": projection[:, 1],
             "chunk_id": [str(c.chunk_id) for c in valid_chunks],
             "document_id": [str(c.document_id) for c in valid_chunks],
+            "filename": [
+                doc_map.get(str(c.document_id), "Unknown") for c in valid_chunks
+            ],
+            "modality": [
+                c.modality.value if hasattr(c.modality, "value") else str(c.modality)
+                for c in valid_chunks
+            ],
+            "metadata": [c.metadata for c in valid_chunks],
             "content": [c.content for c in valid_chunks],
             "snippet": [c.content[:80] + "..." for c in valid_chunks],
         }
     )
-
-    if "selected_chunk" not in st.session_state:
-        st.session_state.selected_chunk = None
 
     fig = px.scatter(
         df,
@@ -64,18 +94,29 @@ def render_projection():
         y="y",
         hover_name="snippet",
         custom_data=["chunk_id"],
-        title="Semantic Clusters of Document Chunks",
         opacity=0.7,
     )
 
+    # Prevent dimming on selection and format the hover tooltip
     fig.update_traces(
         marker=dict(size=8, line=dict(width=1, color="DarkSlateGrey")),
+        selected=dict(marker=dict(opacity=0.7)),
+        unselected=dict(marker=dict(opacity=0.7)),
         hovertemplate="<b>%{hovertext}</b><extra></extra>",
     )
 
+    # Clean up layout, titles, and hover styling
     fig.update_layout(
         xaxis_title="Component 1",
         yaxis_title="Component 2",
+        hoverlabel=dict(
+            font_size=12,
+            font_family="sans-serif",
+            bordercolor="rgba(0,0,0,0.1)",
+        ),
+        hovermode="closest",
+        clickmode="event+select",
+        dragmode="pan",
     )
 
     event = st.plotly_chart(
@@ -85,25 +126,8 @@ def render_projection():
         selection_mode="points",
     )
 
-    selected = None
-
+    # Trigger the modal dialog if a point is selected
     if event and event.selection and event.selection.points:
         idx = event.selection.points[0]["point_index"]
-        selected = df.iloc[idx].to_dict()
-        st.session_state.selected_chunk = selected
-
-    selected = st.session_state.selected_chunk
-
-    st.divider()
-    st.subheader("Selected Chunk Inspector")
-
-    if selected:
-        st.markdown(f"**Document:** `{selected['document_id']}`")
-        st.markdown(f"**Chunk ID:** `{selected['chunk_id']}`")
-        st.text_area(
-            "Full content",
-            value=selected["content"],
-            height=300,
-        )
-    else:
-        st.info("Click a point in the plot to inspect its chunk.")
+        selected_data = df.iloc[idx].to_dict()
+        _chunk_inspector_dialog(selected_data)

@@ -1,0 +1,2 @@
+run_name,context_precision,context_recall,faithfulness,answer_relevancy
+nomic,0.7879,0.62,0.7578,0.7261

@@ -99,44 +99,73 @@ class FixedSizeChunker(BaseChunker):
 
 
 class SentenceChunker(BaseChunker):
-    def __init__(self, max_chunk_size: int = 800, chunk_overlap: int = 150):
-        self.max_chunk_size = max_chunk_size
+    def __init__(self, chunk_size: int = 800, chunk_overlap: int = 150):
+        self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
     def _split(self, text: str) -> list[tuple[str, int, int]]:
-        sentences = []
-        for match in re.finditer(r"[^.!?\n]*[.!?\n]+(?:\s|$)+|.+", text):
-            sentences.append((match.group(), match.start(), match.end()))
+        sentences = [
+            (m.group(), m.start(), m.end())
+            for m in re.finditer(
+                r"[^.!?\n]*[.!?\n]+(?:\s|$)+|.+",
+                text,
+            )
+        ]
 
-        splits = []
+        if not sentences:
+            return []
+
+        splits: list[tuple[str, int, int]] = []
         i = 0
 
         while i < len(sentences):
-            current_text = ""
-            current_start = sentences[i][1]
+            chunk_start_idx = i
+            chunk_sentences = []
+            chunk_length = 0
 
             while i < len(sentences):
-                sentence_text, s_start, s_end = sentences[i]
-                if current_text and (
-                    len(current_text) + len(sentence_text) > self.max_chunk_size
-                ):
+                sentence_text, _, _ = sentences[i]
+                sentence_len = len(sentence_text)
+
+                if chunk_sentences and (chunk_length + sentence_len > self.chunk_size):
                     break
-                current_text += sentence_text
+
+                if not chunk_sentences and sentence_len > self.chunk_size:
+                    chunk_sentences.append(sentences[i])
+                    i += 1
+                    break
+
+                chunk_sentences.append(sentences[i])
+                chunk_length += sentence_len
                 i += 1
 
-            splits.append(
-                (current_text, current_start, current_start + len(current_text))
-            )
+            chunk_text = "".join(s[0] for s in chunk_sentences)
+            start_char = chunk_sentences[0][1]
+            end_char = chunk_sentences[-1][2]
 
-            if i < len(sentences):
-                overlap_size = 0
+            splits.append((chunk_text, start_char, end_char))
 
-                while (
-                    i > 0
-                    and overlap_size + len(sentences[i - 1][0]) <= self.chunk_overlap
-                ):
-                    i -= 1
-                    overlap_size += len(sentences[i][0])
+            if i >= len(sentences):
+                break
+
+            overlap_chars = 0
+            overlap_count = 0
+
+            for sentence in reversed(chunk_sentences):
+                sentence_len = len(sentence[0])
+
+                if overlap_chars + sentence_len > self.chunk_overlap:
+                    break
+
+                overlap_chars += sentence_len
+                overlap_count += 1
+
+            next_i = max(chunk_start_idx + 1, i - overlap_count)
+
+            if next_i <= chunk_start_idx:
+                next_i = chunk_start_idx + 1
+
+            i = next_i
 
         return splits
 

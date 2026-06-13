@@ -1,0 +1,2 @@
+run_name,context_precision,context_recall,faithfulness,answer_relevancy
+reranker,0.8973,0.75,0.7216,0.7811

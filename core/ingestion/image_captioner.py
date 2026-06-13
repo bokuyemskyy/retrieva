@@ -45,13 +45,16 @@ class OllamaVLM(BaseVLM):
     def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
         prompt = (
             "Describe this image in detail. "
-            "Include all visible text, objects, layout, colors, and any "
-            "data or diagrams present. Be thorough and precise."
+            "Transcribe all text exactly. "
+            "Describe objects, layout, colors, and any data or diagrams present. "
+            "Be thorough and precise. "
         )
 
         response = self.client.generate(
             model=self.model_name, prompt=prompt, images=[image_bytes]
         )
+
+        print(response["response"])
         return response["response"]
 
 

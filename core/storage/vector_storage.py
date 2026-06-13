@@ -1,6 +1,8 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import UUID
+
+import numpy as np
 from core.embedding.embedder import EmbedderConfig
 from core.models import (
     Chunk,
@@ -91,11 +93,23 @@ def _get_workspace_models(schema_name: str, vector_size: int):
 
         fts_document = mapped_column(
             TSVECTOR,
-            Computed("to_tsvector('english'::regconfig, content)", persisted=True),
+            Computed("to_tsvector('simple'::regconfig, content)", persisted=True),
         )
 
         __table_args__ = (
             Index("ix_chunk_fts", "fts_document", postgresql_using="gin"),
+            Index(
+                "ix_chunk_embedding_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_with={
+                    "m": 16,
+                    "ef_construction": 64,
+                },
+                postgresql_ops={
+                    "embedding": "vector_cosine_ops",
+                },
+            ),
         )
 
     _MODEL_CACHE[schema_name] = (WorkspaceBase, DocumentModel, ChunkModel)
@@ -111,6 +125,17 @@ class Workspace:
         _, self.DocumentModel, self.ChunkModel = _get_workspace_models(
             schema_name, config.vector_size
         )
+
+    import numpy as np
+
+    def _normalize_embedding(self, embedding: list[float]) -> list[float]:
+        arr = np.asarray(embedding, dtype=np.float32)
+
+        norm = np.linalg.norm(arr)
+        if norm == 0:
+            return embedding
+
+        return (arr / norm).tolist()
 
     def upsert_document(self, doc: Document) -> None:
         with self.SessionLocal() as session:
@@ -136,6 +161,8 @@ class Workspace:
                         f"Expected {self.config.vector_size}, got {len(embedding)}"
                     )
 
+                embedding = self._normalize_embedding(embedding)
+
                 existing = session.get(
                     self.ChunkModel, chunk.chunk_id
                 ) or self.ChunkModel(chunk_id=chunk.chunk_id)
@@ -153,6 +180,8 @@ class Workspace:
         self, query_vector: Embedding, top_k: int = 5
     ) -> list[ChunkSearchResult]:
         with self.SessionLocal() as session:
+            query_vector = self._normalize_embedding(query_vector)
+
             distance = self.ChunkModel.embedding.cosine_distance(query_vector).label(
                 "distance"
             )
@@ -170,7 +199,7 @@ class Workspace:
                         modality=Modality(row.modality),
                         metadata=row.metadata_json,
                     ),
-                    score=1.0 - float(dist),
+                    score=(2.0 - float(dist)) / 2.0,
                 )
                 for row, dist in query.all()
             ]
@@ -237,8 +266,8 @@ class Workspace:
         ]
 
         return [
-            ChunkSearchResult(chunk=chunks_map[uid], score=score)
-            for uid, score in sorted_results
+            ChunkSearchResult(chunk=chunks_map[uid], score=rrf_score)
+            for uid, rrf_score in sorted_results
         ]
 
     def get_document_by_hash(self, content_hash: str) -> UUID | None:
