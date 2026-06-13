@@ -1,11 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import io
 from abc import ABC, abstractmethod
+import re
 from PIL import Image
-
 import base64
+
+
+DEFAULT_PROMPT = (
+    "Analyze this scientific figure. For each observation, state what it means, not just what it looks like. "
+    "Cover in flowing prose: the core finding; all relationships between variables (trends, peaks, saturation, crossovers); "
+    "quantitative anchors such as key values, ratios, and thresholds; physical or mechanistic implications — not just 'A is higher than B' but why that matters. "
+    "Transcribe all axis labels, units, legend entries, and annotations verbatim. "
+    "Be dense and factual. Every sentence must state a distinct scientific fact."
+)
+
+
+_BBOX_PATTERN = re.compile(
+    r"^\s*\[\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*\]\s*$"
+)
+
+
+def _is_degenerate(text: str) -> bool:
+    return not text.strip() or bool(_BBOX_PATTERN.match(text.strip()))
 
 
 @dataclass
@@ -14,80 +32,72 @@ class VLMConfig:
     model_name: str
     api_key: str | None = None
     base_url: str | None = None
+    prompt: str = field(default=DEFAULT_PROMPT)
+    max_retries: int = 3
 
 
 class BaseVLM(ABC):
     provider: str
     model_name: str
+    prompt: str
+    max_retries: int
 
     def __init__(self, config: VLMConfig):
         self.provider = config.provider
         self.model_name = config.model_name
+        self.prompt = config.prompt
+        self.max_retries = config.max_retries
 
     @abstractmethod
-    def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+    def _describe_once(self, image_bytes: bytes, mime_type: str) -> str:
         raise NotImplementedError
+
+    def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+        for attempt in range(self.max_retries):
+            result = self._describe_once(image_bytes, mime_type)
+            if not _is_degenerate(result):
+                return result
+
+        print(
+            f"{self.model_name} returned only degenerate responses after {self.max_retries} attempts"
+        )
+
+        return ""
 
 
 class NullVLM(BaseVLM):
-    def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
+    def _describe_once(self, image_bytes: bytes, mime_type: str) -> str:
         return ""
 
 
 class OllamaVLM(BaseVLM):
     def __init__(self, config: VLMConfig) -> None:
         super().__init__(config)
-
         import ollama
 
         self.client = ollama.Client(host=config.base_url)
 
-    def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
-        prompt = (
-            "Describe this image in extreme detail in paragraph form. "
-            "Explain the logical meaning and summarize any quantitative data. "
-            "Transcribe all visible text, variables, symbols, and equations exactly as they appear."
-            "Output pure text only."
-        )
-
+    def _describe_once(self, image_bytes: bytes, mime_type: str) -> str:
         response = self.client.generate(
-            model=self.model_name, prompt=prompt, images=[image_bytes]
+            model=self.model_name, prompt=self.prompt, images=[image_bytes]
         )
-
         return response["response"]
 
 
 class OpenAIVLM(BaseVLM):
     def __init__(self, config: VLMConfig):
         super().__init__(config)
-
         from openai import OpenAI
 
-        self.client = OpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
+        self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
 
-    def describe(
-        self,
-        image_bytes: bytes,
-        mime_type: str = "image/png",
-    ) -> str:
+    def _describe_once(self, image_bytes: bytes, mime_type: str) -> str:
         b64_image = base64.b64encode(image_bytes).decode()
-
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "input_text",
-                        "text": (
-                            "Describe this image in extreme detail in paragraph form. "
-                            "Explain the logical meaning and summarize any quantitative data. "
-                            "Transcribe all visible text, variables, symbols, and equations exactly as they appear."
-                            "Output pure text only."
-                        ),
-                    },
+                    {"type": "input_text", "text": self.prompt},
                     {
                         "type": "input_image",
                         "image_url": f"data:{mime_type};base64,{b64_image}",
@@ -95,12 +105,7 @@ class OpenAIVLM(BaseVLM):
                 ],
             }
         ]
-
-        response = self.client.responses.create(
-            model=self.model_name,
-            input=messages,
-        )
-
+        response = self.client.responses.create(model=self.model_name, input=messages)
         return response.output_text.strip()
 
 
@@ -117,10 +122,7 @@ _EXT_TO_MIME = {
 
 
 class ImageCaptioner:
-    def __init__(
-        self,
-        vlm: BaseVLM,
-    ) -> None:
+    def __init__(self, vlm: BaseVLM) -> None:
         self._vlm = vlm
 
     @property
@@ -129,9 +131,7 @@ class ImageCaptioner:
 
     def process(self, image_bytes: bytes, ext: str = "png") -> str:
         mime = _EXT_TO_MIME.get(ext.lower().lstrip("."), "image/png")
-
-        vlm_text = self._vlm.describe(image_bytes, mime_type=mime)
-        return vlm_text
+        return self._vlm.describe(image_bytes, mime_type=mime)
 
 
 class VLMFactory:
@@ -146,15 +146,12 @@ class VLMFactory:
         if config.provider not in cls._registry:
             raise ValueError(f"Unknown provider {config.provider}")
 
-        vlm_class = cls._registry[config.provider]
-        client = vlm_class(config)
+        client = cls._registry[config.provider](config)
 
         if validate:
             try:
-                test_img = Image.new("RGB", (10, 10), "white")
                 buf = io.BytesIO()
-                test_img.save(buf, format="PNG")
-
+                Image.new("RGB", (10, 10), "white").save(buf, format="PNG")
                 client.describe(buf.getvalue(), mime_type="image/png")
             except Exception as e:
                 raise RuntimeError(
