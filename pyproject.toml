@@ -17,6 +17,7 @@ dependencies = [
     "langchain-qdrant>=1.1.0",
     "langchain-text-splitters>=1.1.2",
     "matplotlib>=3.10.9",
+    "moviepy>=1.0.3",
     "numpy>=2.4.4",
     "ollama>=0.6.2",
     "openai>=2.36.0",

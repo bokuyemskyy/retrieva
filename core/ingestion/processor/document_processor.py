@@ -40,7 +40,7 @@ class DocumentProcessor(BaseFileProcessor):
         )
 
         for page_idx, page_info in enumerate(page_data):
-            print(f"Processing page {page_idx}/{len(doc)}")
+            print(f"Processing page {page_idx + 1}/{len(doc)}")
             base_meta = {"page": page_idx}
 
             md_text = page_info["text"]
@@ -65,10 +65,12 @@ class DocumentProcessor(BaseFileProcessor):
 
                         vlm_caption = self.image_captioner.process(img_bytes, ext="png")
 
+                        print(f"Analyzed image: {vlm_caption}")
+
                         if vlm_caption:
                             chunks.extend(
                                 self.chunker.chunk(
-                                    content=f"Image Caption from page {page_idx}:\n{vlm_caption}",
+                                    content=vlm_caption,
                                     document=document,
                                     modality=Modality.PDF_IMAGE,
                                     metadata={

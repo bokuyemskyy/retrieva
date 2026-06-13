@@ -14,8 +14,8 @@ class AudioProcessor(BaseFileProcessor):
     def __init__(
         self,
         chunker: BaseChunker,
-        model_size: WhisperModel = "base",
-        device: str = "cpu",
+        model_size: WhisperModel = "tiny",
+        device: str = "auto",
         compute_type: str = "int8",
         language: str | None = "en",
     ) -> None:
@@ -34,6 +34,7 @@ class AudioProcessor(BaseFileProcessor):
 
         transcript = self._transcribe(path)
 
+        print(f"Analyzed audio: {transcript}")
         return self.chunker.chunk(
             content=transcript,
             document=document,

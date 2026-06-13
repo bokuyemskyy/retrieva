@@ -44,17 +44,16 @@ class OllamaVLM(BaseVLM):
 
     def describe(self, image_bytes: bytes, mime_type: str = "image/png") -> str:
         prompt = (
-            "Describe this image in detail. "
-            "Transcribe all text exactly. "
-            "Describe objects, layout, colors, and any data or diagrams present. "
-            "Be thorough and precise. "
+            "Describe this image in extreme detail in paragraph form. "
+            "Explain the logical meaning and summarize any quantitative data. "
+            "Transcribe all visible text, variables, symbols, and equations exactly as they appear."
+            "Output pure text only."
         )
 
         response = self.client.generate(
             model=self.model_name, prompt=prompt, images=[image_bytes]
         )
 
-        print(response["response"])
         return response["response"]
 
 
@@ -83,8 +82,10 @@ class OpenAIVLM(BaseVLM):
                     {
                         "type": "input_text",
                         "text": (
-                            "Describe this image in detail. "
-                            "Include all visible text, objects, layout, colors, and diagrams."
+                            "Describe this image in extreme detail in paragraph form. "
+                            "Explain the logical meaning and summarize any quantitative data. "
+                            "Transcribe all visible text, variables, symbols, and equations exactly as they appear."
+                            "Output pure text only."
                         ),
                     },
                     {
