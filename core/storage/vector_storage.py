@@ -98,18 +98,18 @@ def _get_workspace_models(schema_name: str, vector_size: int):
 
         __table_args__ = (
             Index("ix_chunk_fts", "fts_document", postgresql_using="gin"),
-            Index(
-                "ix_chunk_embedding_hnsw",
-                "embedding",
-                postgresql_using="hnsw",
-                postgresql_with={
-                    "m": 16,
-                    "ef_construction": 64,
-                },
-                postgresql_ops={
-                    "embedding": "vector_cosine_ops",
-                },
-            ),
+            # Index(
+            #     "ix_chunk_embedding_hnsw",
+            #     "embedding",
+            #     postgresql_using="hnsw",
+            #     postgresql_with={
+            #         "m": 16,
+            #         "ef_construction": 64,
+            #     },
+            #     postgresql_ops={
+            #         "embedding": "vector_cosine_ops",
+            #     },
+            # ),
         )
 
     _MODEL_CACHE[schema_name] = (WorkspaceBase, DocumentModel, ChunkModel)

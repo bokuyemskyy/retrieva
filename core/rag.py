@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from slugify import slugify
 
 from core.embedding.embedder import EmbedderConfig, EmbedderFactory
-from core.ingestion.chunker import BaseChunker, RecursiveChunker
+from core.ingestion.chunker import BaseChunker, FixedSizeChunker, RecursiveChunker
 from core.ingestion.image_captioner import (
     ImageCaptioner,
     VLMConfig,
@@ -57,7 +57,7 @@ class RAG:
         doc_proc = DocumentProcessor(chunker=self.chunker, image_captioner=captioner)
         img_proc = ImageProcessor(chunker=self.chunker, image_captioner=captioner)
         txt_proc = TextProcessor(chunker=self.chunker)
-        aud_proc = AudioProcessor(chunker=self.chunker)
+        aud_proc = AudioProcessor(chunker=FixedSizeChunker(600, 100))
 
         return {
             "pdf": doc_proc,
