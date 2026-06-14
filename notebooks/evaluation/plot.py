@@ -3,20 +3,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 models_files = {
-    "nomic-embed-text": "ragas_nomic_means.csv",
-    "mxbai-embed-large": "ragas_mxbai_means.csv",
-    "qwen3-embedding:8b": "ragas_qwen_means.csv",
-    "text-embeddings-3-small": "ragas_small_means.csv",
-    "text-embeddings-3-large": "ragas_large_means.csv",
+    "Sparse search": "results/ragas_text_means.csv",
+    "nomic-embed-text": "results/ragas_nomic_means.csv",
+    "text-embeddings-3-large": "results/ragas_large_means.csv",
+    "qwen3-embedding:8b": "results/ragas_qwen_means.csv",
+    "text-embeddings-3-large\nwith reranker": "results/ragas_reranker_means1.csv",
 }
 
-metrics = ["context_precision", "context_recall", "faithfulness", "answer_relevancy"]
+metrics = [
+    "context_precision",
+    "context_recall",
+    "faithfulness",
+    "answer_relevancy",
+]
 
 data = []
+
 for model_name, file_name in models_files.items():
     try:
         df = pd.read_csv(file_name)
         row = df.iloc[0]
+
         data.append(
             {
                 "model": model_name,
@@ -26,40 +33,59 @@ for model_name, file_name in models_files.items():
                 "answer_relevancy": row["answer_relevancy"],
             }
         )
+
     except FileNotFoundError:
-        print(
-            f"Warning: {file_name} not found. Please ensure it is in the same directory."
-        )
+        print(f"Warning: {file_name} not found")
 
 df_plot = pd.DataFrame(data)
 
 if not df_plot.empty:
-    x = np.arange(len(df_plot["model"]))
-    width = 0.2
+    x = np.arange(len(df_plot))
+    width = 0.18
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(13, 6))
 
     colors = ["#5BA4CF", "#4785A8", "#346682", "#21475C"]
 
     for i, metric in enumerate(metrics):
         offset = (i - 1.5) * width
+
         ax.bar(
             x + offset,
             df_plot[metric],
             width,
-            label=metric,
+            label=metric.replace("_", " ").title(),
             color=colors[i],
             edgecolor="white",
         )
 
-    ax.set_ylabel("Scores")
+    ax.set_ylabel("Score")
+    ax.set_xlabel("Retrieval configuration")
+
     ax.set_xticks(x)
-    ax.set_xticklabels(df_plot["model"], rotation=15, ha="right")
-    ax.legend(loc="upper left", bbox_to_anchor=(1, 1))
+    ax.set_xticklabels(
+        df_plot["model"],
+        rotation=12,
+        ha="right",
+    )
+
+    ax.set_ylim(0, 1)
+
+    ax.legend(
+        title="Metric",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+    )
 
     plt.tight_layout()
 
-    plt.savefig("metrics_comparison.png", dpi=300)
+    plt.savefig(
+        "metrics_comparison.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+
     plt.show()
+
 else:
     print("No data loaded. Please check your CSV files.")
