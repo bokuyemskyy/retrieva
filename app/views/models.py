@@ -9,27 +9,53 @@ def _model_form(
     config_key: str,
     active_key: str,
 ):
-    provider = st.selectbox("Provider", ["ollama", "openai"], key=f"{prefix}_prov")
+    provider = st.selectbox(
+        "Provider",
+        ["ollama", "openai"],
+        key=f"{prefix}_prov",
+    )
+
     default_model = (
         default_model_ollama if provider == "ollama" else default_model_openai
     )
-    model_name = st.text_input("Model name", value=default_model, key=f"{prefix}_model")
+
     default_url = (
         "http://localhost:11434"
         if provider == "ollama"
         else "https://api.openai.com/v1"
     )
-    base_url = st.text_input("Base URL", value=default_url, key=f"{prefix}_url")
+
+    model_name = st.text_input(
+        "Model name",
+        key=f"{prefix}_model",
+        placeholder=default_model,
+    )
+
+    base_url = st.text_input(
+        "Base URL",
+        key=f"{prefix}_url",
+        placeholder=default_url,
+    )
+
     api_key = (
-        st.text_input("API key", type="password", key=f"{prefix}_key")
+        st.text_input(
+            "API key",
+            type="password",
+            key=f"{prefix}_key",
+            placeholder="sk-...",
+        )
         if provider == "openai"
         else ""
     )
 
-    if st.button("Add", type="primary", use_container_width=True, key=f"{prefix}_add"):
-        if not model_name:
-            st.error("Model name required.")
-            return
+    if st.button(
+        "Add",
+        type="primary",
+        width="stretch",
+        key=f"{prefix}_add",
+    ):
+        model_name = model_name or default_model
+        base_url = base_url or default_url
 
         cfg = {
             "name": f"{model_name} ({provider})",
@@ -38,8 +64,10 @@ def _model_form(
             "base_url": base_url,
             "api_key": api_key or None,
         }
+
         st.session_state[config_key].append(cfg)
         st.session_state[active_key] = cfg["name"]
+
         save_configs()
         st.rerun()
 

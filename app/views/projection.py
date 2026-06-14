@@ -8,7 +8,6 @@ import umap
 
 @st.dialog("Chunk Details")
 def _chunk_inspector_dialog(chunk_data: dict):
-    """Displays chunk details in a clean popup modal."""
     st.markdown(f"**Source File:** `{chunk_data.get('filename', 'Unknown')}`")
     st.markdown(f"**Modality:** `{chunk_data.get('modality', 'Unknown')}`")
     st.markdown(f"**Chunk ID:** `{chunk_data['chunk_id']}`")
@@ -23,7 +22,6 @@ def _chunk_inspector_dialog(chunk_data: dict):
         "Content",
         value=chunk_data["content"],
         height=300,
-        # Removed disabled=True to get rid of the gray background
         label_visibility="collapsed",
     )
 
@@ -42,7 +40,6 @@ def render_projection():
             chunks = st.session_state.rag.get_chunks_with_embeddings(
                 workspace_name=ws, limit=10_000
             )
-            # Fetch documents to map document_id to filename
             docs = st.session_state.rag.get_documents(workspace_name=ws)
             doc_map = {str(d.document_id): d.filename for d in docs}
         except Exception as e:
@@ -68,7 +65,6 @@ def render_projection():
         )
         projection = reducer.fit_transform(embeddings)
 
-    # Build the dataframe with the new requested fields
     df = pd.DataFrame(
         {
             "x": projection[:, 0],
@@ -97,7 +93,6 @@ def render_projection():
         opacity=0.7,
     )
 
-    # Prevent dimming on selection and format the hover tooltip
     fig.update_traces(
         marker=dict(size=8, line=dict(width=1, color="DarkSlateGrey")),
         selected=dict(marker=dict(opacity=0.7)),
@@ -105,7 +100,6 @@ def render_projection():
         hovertemplate="<b>%{hovertext}</b><extra></extra>",
     )
 
-    # Clean up layout, titles, and hover styling
     fig.update_layout(
         xaxis_title="Component 1",
         yaxis_title="Component 2",
@@ -121,12 +115,11 @@ def render_projection():
 
     event = st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         on_select="rerun",
         selection_mode="points",
     )
 
-    # Trigger the modal dialog if a point is selected
     if event and event.selection and event.selection.points:
         idx = event.selection.points[0]["point_index"]
         selected_data = df.iloc[idx].to_dict()

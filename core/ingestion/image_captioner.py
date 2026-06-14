@@ -115,6 +115,19 @@ _EXT_TO_MIME = {
 }
 
 
+def _run_tesseract_ocr(image_bytes: bytes) -> str:
+    try:
+        import pytesseract
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        text = pytesseract.image_to_string(image)
+        return text.strip()
+    except ImportError:
+        raise RuntimeError("pytesseract is not installed")
+    except Exception as e:
+        raise RuntimeError(f"Tesseract OCR failed: {e}") from e
+
+
 class ImageCaptioner:
     def __init__(self, vlm: BaseVLM) -> None:
         self._vlm = vlm
@@ -123,9 +136,22 @@ class ImageCaptioner:
     def vlm(self) -> BaseVLM:
         return self._vlm
 
-    def process(self, image_bytes: bytes, ext: str = "png") -> str:
+    def process(
+        self, image_bytes: bytes, ext: str = "png", use_ocr: bool = True
+    ) -> str:
         mime = _EXT_TO_MIME.get(ext.lower().lstrip("."), "image/png")
-        return self._vlm.describe(image_bytes, mime_type=mime)
+        vlm_text = self._vlm.describe(image_bytes, mime_type=mime)
+
+        if not use_ocr:
+            return vlm_text
+
+        ocr_text = _run_tesseract_ocr(image_bytes)
+        parts = []
+        if vlm_text:
+            parts.append(f"[VLM Description]\n{vlm_text}")
+        if ocr_text:
+            parts.append(f"[OCR Text]\n{ocr_text}")
+        return "\n\n".join(parts)
 
 
 class VLMFactory:
